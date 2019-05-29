@@ -45,6 +45,10 @@ modified for single board / self triggered readout
 using namespace std;
 using namespace std::chrono;
 
+
+int doof = 0;
+
+
 // global constants
 int TRACELEN = 250;
 int MATRIX_J = 1;
@@ -81,6 +85,8 @@ int L=5;     // Length of moving average intervals, centered around current valu
 int DELAY=5; // DELAY for the CFD
 int M=5; // Window for MWD
 double TAU=1.; // Impact value for MA part of MWD
+int nTabs = 20; // Number of tabs for the FIR filter
+vector<double> FIR_COEF; // Array for the FIR filter coefficients
 // global counters
 unsigned int NOE=0;
 
@@ -226,6 +232,7 @@ tagger_struct TAGGER;
 void extraction();
 void multis_calib();
 void plot_waves(vector<signal_struct> &array, char const *name, char const *modus);
+void plot_waves_compare(char const *name, char const *modus);
 void plot_interpol(vector<double> &x, vector<double> &y);
 void plot_time_energy(time_struct &array);
 void plot_energy_hist(vector<signal_struct> &array, char const *path);
@@ -254,6 +261,7 @@ void reset_times(vector<vector<time_struct> > &array);
 void init_multis_norm(vector<vector<vector<multis_norm_struct> > > &array, int channels);
 void fill_hists();
 void init_hists(int channels);
+bool read_fir(string file);
 bool read_config(char const *file);
 bool linreg(vector<double> &x, vector<double> &y, double *m, double *b);
 // Double_t fpeaks(Double_t *x, Double_t *par);
@@ -261,6 +269,7 @@ Double_t langaufun(Double_t *x, Double_t *par);
 TF1 *langaufit(TH1 *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent);
 Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM);
 Int_t largest_1Dbin(TH1D *hist, Int_t lower, Int_t upper);
+vector<double> fir(vector<double> trace);
 void print_detector_config();
 bool is_in_string(char *character, char const *letter);
 
@@ -809,31 +818,31 @@ void extraction(){
       MWD[i].trace.push_back(value);
       MWD[i].base.trace.push_back(value);
       // TMAX Filter 
-      value = 0.;
-      // To be implemented
-      value = RAW_CALIB[i].trace[n];
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.TMAX_energy[i];
-      // Push sample into array
-      TMAX[i].trace.push_back(value);
-      TMAX[i].base.trace.push_back(value);
+      // value = 0.;
+      // // To be implemented
+      // value = RAW_CALIB[i].trace[n];
+      // // Apply energy calibration and SiPM pixel calibration
+      // value *= CALIB.TMAX_energy[i];
+      // // Push sample into array
+      // TMAX[i].trace.push_back(value);
+      // TMAX[i].base.trace.push_back(value);
 		}
     // Calculate statistics and software threshold for signals
     MA[i].base.mean = array_mean(0,BASELINE_CUT*RAW_CALIB[i].multis-(L-1)/2,MA[i].base.trace);    
     MA[i].base.std = array_std(0,BASELINE_CUT*RAW_CALIB[i].multis-(L-1)/2,MA[i].base.mean,MA[i].base.trace);
     MWD[i].base.mean = array_mean(M,BASELINE_CUT*RAW_CALIB[i].multis,MWD[i].base.trace);    
     MWD[i].base.std = array_std(M,BASELINE_CUT*RAW_CALIB[i].multis,MWD[i].base.mean,MWD[i].base.trace);
-    TMAX[i].base.mean = array_mean(0,BASELINE_CUT*RAW_CALIB[i].multis,TMAX[i].base.trace);    
-    TMAX[i].base.std = array_std(0,BASELINE_CUT*RAW_CALIB[i].multis,TMAX[i].base.mean,TMAX[i].base.trace);
+    // TMAX[i].base.mean = array_mean(0,BASELINE_CUT*RAW_CALIB[i].multis,TMAX[i].base.trace);    
+    // TMAX[i].base.std = array_std(0,BASELINE_CUT*RAW_CALIB[i].multis,TMAX[i].base.mean,TMAX[i].base.trace);
     // Calculate software th based on multiplicy of baseline RMS
     MA[i].base.TH = THRESHOLD_MULTIPLICY * MA[i].base.std;
     MWD[i].base.TH = THRESHOLD_MULTIPLICY * MWD[i].base.std; 
-    TMAX[i].base.TH = THRESHOLD_MULTIPLICY * TMAX[i].base.std; 
+    // TMAX[i].base.TH = THRESHOLD_MULTIPLICY * TMAX[i].base.std; 
     // Now substract baseline froms samples
     for (int n = 0; n<BASELINE_CUT*RAW_CALIB[i].multis; n++ ){
       MA[i].trace[n] -= MA[i].base.mean;
       MWD[i].trace[n] -= MWD[i].base.mean;
-      TMAX[i].trace[n] -= TMAX[i].base.mean;
+      // TMAX[i].trace[n] -= TMAX[i].base.mean;
     }
     /////////////////////////////////////////////////////
     // SIGNAL REGION
@@ -906,17 +915,17 @@ void extraction(){
         MWD[i].energy=MWD[i].trace[n];
       }
       // TMAX FILTER
-      value = 0.;
-      // To be implemented
-      value = RAW_CALIB[i].trace[n];
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.TMAX_energy[i];
-      // Push sample into array
-      TMAX[i].trace.push_back(value);
-      // Look for maximum
-      if (TMAX[i].trace[n] > TMAX[i].energy && TMAX[i].trace[n]>TMAX[i].base.TH){
-        TMAX[i].energy=TMAX[i].trace[n];
-      }
+      // value = 0.;
+      // // To be implemented
+      // value = RAW_CALIB[i].trace[n];
+      // // Apply energy calibration and SiPM pixel calibration
+      // value *= CALIB.TMAX_energy[i];
+      // // Push sample into array
+      // TMAX[i].trace.push_back(value);
+      // // Look for maximum
+      // if (TMAX[i].trace[n] > TMAX[i].energy && TMAX[i].trace[n]>TMAX[i].base.TH){
+      //   TMAX[i].energy=TMAX[i].trace[n];
+      // }
     }
     /////////////////////////////////////////////////////
     // REST OF SIGNAL
@@ -952,13 +961,22 @@ void extraction(){
       // Push sample into array
       MWD[i].trace.push_back(value);
       // TMAX Filter
-      value = 0.;
-      // To be implemented
-      value = RAW_CALIB[i].trace[n];
-      // Calibrate 
-      value *= CALIB.TMAX_energy[i];
-      TMAX[i].trace.push_back(0);
+      // value = 0.;
+      // // To be implemented
+      // value = RAW_CALIB[i].trace[n];
+      // // Calibrate 
+      // value *= CALIB.TMAX_energy[i];
+      // TMAX[i].trace.push_back(0);
     }
+    /////////////////////////////////////////////////////
+    // APPLICATION OF THE FIR FILTER TO RAW_CALIB 
+    /////////////////////////////////////////////////////
+    TMAX[i].trace.clear();
+    TMAX[i].trace = fir(RAW_CALIB[i].trace);
+    for (int n = BASELINE_CUT; n < ENERGY_WINDOW_MAX; n++){
+      if (TMAX[i].trace[n] > TMAX[i].energy && TMAX[i].trace[n] > TMAX[i].base.TH) TMAX[i].energy = TMAX[i].trace[n];
+    }
+
     /////////////////////////////////////////////////////
     // EXTRACTION OF ENERGY FEATURES AND SIGNAL THRESHOLD 
     /////////////////////////////////////////////////////
@@ -1074,7 +1092,6 @@ void extraction(){
   //
   if(strcmp(MODE, "BEAM") == 0) {
     // If xtal in beam is not valid
-    int shot = 0;
     // Read out the tagger statistics
     int tags_per_event = 0;
     for(int n=0; n<TAG_CHANNELS; n++){
@@ -1115,29 +1132,29 @@ void extraction(){
           RAW_CALIB[i].tagged[k].energy = RAW_CALIB[i].energy;
           MA[i].tagged[k].energy = MA[i].energy;
           MWD[i].tagged[k].energy = MWD[i].energy;
-          RAW_CALIB[i].tagged[k].energy = TMAX[i].energy;
+          TMAX[i].tagged[k].energy = TMAX[i].energy;
         }
         else{
           RAW_CALIB[i].tagged[k].energy = 0.0;
           MA[i].tagged[k].energy = 0.0;
           MWD[i].tagged[k].energy = 0.0;
-          RAW_CALIB[i].tagged[k].energy = 0.0;
+          TMAX[i].tagged[k].energy = 0.0;
         }
         // Fill energies only if no multiples are detected
         if ( RAW_CALIB[i].is_signal == true && // If signal is valid
              TAGGER.time[k] != 0 && // and if tagger is set for energy k
              tags_per_event == 1 // and if only one tagged energy per tag
-              ){ 
+              ){    
           RAW_CALIB[i].tagged[k].energy_m = RAW_CALIB[i].energy;
           MA[i].tagged[k].energy_m = MA[i].energy;
           MWD[i].tagged[k].energy_m = MWD[i].energy;
-          RAW_CALIB[i].tagged[k].energy_m = TMAX[i].energy;
+          TMAX[i].tagged[k].energy_m = TMAX[i].energy;
         }
         else{
           RAW_CALIB[i].tagged[k].energy_m = 0.0;
           MA[i].tagged[k].energy_m = 0.0;
           MWD[i].tagged[k].energy_m = 0.0;
-          RAW_CALIB[i].tagged[k].energy_m = 0.0;
+          TMAX[i].tagged[k].energy_m = 0.0;
         }
         // Fill energies for constrained timing window and without multiples
         if ( RAW_CALIB[i].is_signal == true && // If signal is valid
@@ -1149,13 +1166,26 @@ void extraction(){
           RAW_CALIB[i].tagged[k].energy_mt = RAW_CALIB[i].energy;
           MA[i].tagged[k].energy_mt = MA[i].energy;
           MWD[i].tagged[k].energy_mt = MWD[i].energy;
-          RAW_CALIB[i].tagged[k].energy_mt = TMAX[i].energy;
+          TMAX[i].tagged[k].energy_mt = TMAX[i].energy;
+          // if  (k == 0 && 
+          //     (NOE % 10) == 0 &&
+          //     i == 0 
+          //   ){
+          //   doof++;
+          //   hfile->cd("JUNK");
+          //   plot_waves_compare("k0", "TRACE");
+          //   printf("CANDIDATE: %d\n", doof);
+          //   for (int t = 0; t < N_E_WINDOW; t ++){ 
+          //     printf("%3.1f ", TAGGER.time[t]);
+          //   }
+          //   printf("\n\n");
+          // }
         }
         else{
           RAW_CALIB[i].tagged[k].energy_mt = 0.0;
           MA[i].tagged[k].energy_mt = 0.0;
           MWD[i].tagged[k].energy_mt = 0.0;
-          RAW_CALIB[i].tagged[k].energy_mt = 0.0;
+          TMAX[i].tagged[k].energy_mt = 0.0;
         }
       }
     }
@@ -1166,6 +1196,8 @@ void extraction(){
       (strcmp(MODE, "BEAM") == 0 && is_coinc == true) || // Beam mode or
       (strcmp(MODE, "PULSER") == 0) ) { // Pulser mode
     if(NOE%1000==0){
+      hfile->cd("WAVE_FORMS/");
+      plot_waves_compare("FILTER_COMPARE", "TRACE");
       hfile->cd("WAVE_FORMS/RAW_CALIB");
       plot_waves(RAW_CALIB, "SIGNAL_RAW_CALIB", "TRACE");
       // Set printing folder to MA coincident waves
@@ -1775,7 +1807,7 @@ void print_stat_multis_calib(){
 
 void plot_waves(vector<signal_struct> &array, char const *name, char const *modus) {
   // Canvas for the combined waveforms
-  TCanvas *c_combined = new TCanvas("c_combined","Wave_forms",200,10,500,300);
+  TCanvas *c_combined = new TCanvas("c_combined","Wave_forms",200,10,1280,1024);
   // Canvas for split wavedforms
   TCanvas *c_split = new TCanvas("c_split","Wave_forms",10,10,700,900);
   // Check if array is a RAW trace
@@ -1833,6 +1865,8 @@ void plot_waves(vector<signal_struct> &array, char const *name, char const *modu
     } 
     else {ch = (i / (int)MAPPING.size()) + (i%(int)MAPPING.size())*(int)MAPPING[0].size(); }
     c_split->cd(ch+1);
+    gPad->SetGrid();
+    gPad->SetBorderSize(5);
     // For the splitscreen, only draw black waves
     tg_combined[i]->Draw("AL*");
     // Reset to the normal color scheme
@@ -1846,9 +1880,99 @@ void plot_waves(vector<signal_struct> &array, char const *name, char const *modu
   char name_split[100];
   sprintf(name_split, "%s_split", name);
   c_split->Write(name_split);
+  // delete legend;
+  // delete[] tg_combined;
+  // delete mg_combined;
   delete c_combined;
   delete c_split;
 }
+
+void plot_waves_compare(char const *name, char const *modus) {
+  int tracelen = (int)RAW_CALIB[0].trace.size();
+  // Canvas for signals split into channels
+  TCanvas *c_split = new TCanvas("c_split","Wave_forms",10,10,1280,1024);
+  c_split->Divide((int)MAPPING[0].size(), (int)MAPPING.size());
+  // Set grid
+  c_split->SetGrid();
+  // Now loop through all channel
+  for(Int_t i=0; i < tracelen; i++){   //Channel loop 
+    // Only paint vaild channels / non-empty channels
+    if (RAW_CALIB[i].is_valid == false || tracelen == 0) continue;
+      // Create a multigraph canvas
+    TMultiGraph *mg_combined = new TMultiGraph();
+    // Set its title
+    mg_combined->SetTitle("Signal example; Time [1ns]; ADC channel [arb. unit]");
+    // Create legend
+    TLegend* legend = new TLegend(0.7,0.7,0.9,0.9);
+    legend->SetHeader("ADC Digitization"); // option "C" allows to center the header
+    // Create different graphs
+    TGraph *tg_combined[4]; // For the 4 Filter types 
+    // If valid, paint
+    if (strcmp(modus, "TRACE") == 0){
+      // Container for passing to the Root TGraph because vectors don't work
+      Double_t wave_y[4][tracelen];
+      Double_t wave_x[4][tracelen];
+      for(Int_t n = 0; n < tracelen; n++){
+        wave_y[0][n] = RAW_CALIB[i].trace[n]; 
+        wave_x[0][n] = n * RAW_CALIB[i].sample_t; // Calibrate to the sampling rate
+        wave_y[1][n] = MA[i].trace[n]; 
+        wave_x[1][n] = n * MA[i].sample_t; // Calibrate to the sampling rate
+        wave_y[2][n] = MWD[i].trace[n]; 
+        wave_x[2][n] = n * MWD[i].sample_t; // Calibrate to the sampling rate
+        wave_y[3][n] = TMAX[i].trace[n]; 
+        wave_x[3][n] = n * TMAX[i].sample_t; // Calibrate to the sampling rate
+      }
+      for (int j = 0; j < 4; j++){
+        tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
+      }
+    }
+    else if (strcmp(modus, "CFD") == 0){
+      Double_t wave_y[4][RAW_CALIB[i].CFD.trace.size()];
+      Double_t wave_x[4][RAW_CALIB[i].CFD.trace.size()];
+      for(Int_t n = 0; n< (Int_t) RAW_CALIB[i].CFD.trace.size(); n++){
+        wave_y[0][n] = RAW_CALIB[i].CFD.trace[n];
+        wave_x[0][n] = n * RAW_CALIB[i].sample_t; // Calibrate to the sampling rate
+        wave_y[1][n] = MA[i].CFD.trace[n];
+        wave_x[1][n] = n * MA[i].sample_t; // Calibrate to the sampling rate
+        wave_y[2][n] = MWD[i].CFD.trace[n];
+        wave_x[2][n] = n * MWD[i].sample_t; // Calibrate to the sampling rate
+        wave_y[3][n] = TMAX[i].CFD.trace[n];
+        wave_x[3][n] = n * TMAX[i].sample_t; // Calibrate to the sampling rate
+      }
+      for (int j = 0; j < 4; j++){
+        tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
+      }
+    } 
+    else{ printf("ERROR (plot_waves): Plot option invalid\n");}
+    for (int j = 0; j < 4; j++){
+      tg_combined[j]->SetLineColor(j+1);
+      tg_combined[j]->SetMarkerColor(j+1);
+      tg_combined[j]->SetMarkerSize(0.35);
+      tg_combined[j]->SetLineWidth(2);
+      char text[100];
+      sprintf(text,"SIGNAL_%i",j);
+      tg_combined[j]->SetTitle(text);
+      legend->AddEntry(tg_combined[j],text,"f");
+      mg_combined->Add(tg_combined[j]);
+    }
+    int ch = (i / (int)MAPPING.size()) + (i%(int)MAPPING.size())*(int)MAPPING[0].size();
+    c_split->cd(ch+1);
+    gPad->SetGrid();
+    // For the splitscreen, only draw black waves
+    mg_combined->Draw("AL*");
+    legend->Draw();
+    // delete legend;
+    // delete[] tg_combined;
+    // delete mg_combined;
+  }
+  // gPad->Modified();
+  // gPad->Update();
+  char name_split[100];
+  sprintf(name_split, "%s_split", name);
+  c_split->Write(name_split);
+  delete c_split;
+}
+
 
 void plot_time_energy(time_struct &array) {
   TCanvas *c_waves = new TCanvas("c1","Wave_forms",200,10,500,300);
@@ -2888,6 +3012,30 @@ bool linreg(vector<double> &x, vector<double> &y, double *m, double *b){
   return true; 
 }
 
+vector<double> fir(vector<double> trace){
+  // Return array
+  vector<double> filtered;
+  // Number of tabs
+  nTabs = (int)FIR_COEF.size();
+  // total sum
+  double sum = 0.;
+  // For each sample of the trace
+  for (int n = 0; n < (int)trace.size(); n++){
+    // reset the sum
+    sum = 0.;
+    // For each tab
+    for (int k = 0; k < nTabs; k++){
+      // Check the border condition
+      if ( (n-k) < 0 ) continue;
+      sum += trace[n - k] * FIR_COEF[k];
+    }
+    // Push back the convolution sum
+    filtered.push_back(sum);
+  }
+  return filtered;
+}
+
+
 
 // Prints usage informaion for user
 void print_usage(){
@@ -2977,6 +3125,27 @@ void build_structure(){
   hfile->mkdir("WAVE_FORMS/CFD/MWD/INTERPOL");
   hfile->mkdir("WAVE_FORMS/CFD/TMAX");
   hfile->mkdir("WAVE_FORMS/CFD/TMAX/INTERPOL");
+
+  // Junk
+  hfile->mkdir("JUNK");
+}
+
+bool read_fir(const char *file){
+  // set status for return function
+  ifstream file_in(file);
+  // Check if file exists
+  if (!file_in.is_open()){
+    printf("ERROR (read_fir): FIR filter parameter file specified in the config file does not exist!\n");
+    return(false);
+  }
+  else printf("read_fir: FIR coefficients read in under: %s\n", file);
+  // If yes, fill the parameters in the vector
+  string line;
+  while(getline(file_in, line) )
+  {
+    FIR_COEF.push_back( stof(line) );
+  }
+  return(true);
 }
 
 bool read_config(const char *file){
@@ -3027,6 +3196,13 @@ bool read_config(const char *file){
         if(strcmp(key.c_str(), "M") == 0) M = stoi(value); 
         if(strcmp(key.c_str(), "TAU") == 0) TAU = stod(value);
         if(strcmp(key.c_str(), "CFD_fraction") == 0) CFD_fraction = stod(value);
+        // Read in FIR filter coefficients if chosen
+        if(strcmp(key.c_str(), "FIR") == 0) {
+          if (!read_fir(value.c_str())) {
+            printf("ERROR (read_config): FIR filter coef. file error.\n");
+            return(false);
+          }
+        }
         // Calibration parameters
         // Check for the MULTIS_CALIB's
         string subkey = key.substr(0, (int)key.size()-2);
