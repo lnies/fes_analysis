@@ -79,6 +79,7 @@ bool MULTIS_CALIB_MODE = false;
 // global settings
 double THRESHOLD_MULTIPLICY= 1;
 bool GLITCH_FILTER = false;
+bool SATURATION_FILTER = false;
 int GLITCH_FILTER_RANGE = 0;
 double CFD_fraction = 0.5;
 int L=5;     // Length of moving average intervals, centered around current value (mus be odd)
@@ -239,10 +240,11 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path);
 void plot_tagger_hist(vector<signal_struct> &array, char const *path);
 void plot_timing_hist(vector<signal_struct> &signal, char const *path);
 void plot_multis_hist();
-double awg_MA(const vector<double> &array, int ch=1, int down=0, int up=0);
 double randit(int ini=0);
-double array_mean(int start, int end, const vector<double> &array);
-double array_std(int start, int end, double mean, const vector<double> &array);
+double array_mean(const vector<double> &array, int start, int end);
+double array_std(const vector<double> &array, int start, int end, double mean);
+int array_largest(vector<double> &array, int lower, int upper);
+int array_zero_xing(vector<double> &array, int lower, int upper);
 void interpolate(vector<signal_struct> &signal);
 void time_compare(vector<signal_struct> &signal);
 vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
@@ -269,9 +271,15 @@ Double_t langaufun(Double_t *x, Double_t *par);
 TF1 *langaufit(TH1 *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent);
 Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM);
 Int_t largest_1Dbin(TH1D *hist, Int_t lower, Int_t upper);
-vector<double> fir(vector<double> trace);
+vector<double> FIR_filter(vector<double> &trace, double calib);
+vector<double> MA_filter(vector<double> &trace, double calib);
+vector<double> MWD_filter(vector<double> &trace, double calib);
+vector<double> CFD(vector<double> &trace);
 void print_detector_config();
 bool is_in_string(char *character, char const *letter);
+bool is_glitch(vector<double> &trace, double TH, int n);
+bool is_saturation(signal_struct &signal, int n);
+int is_valid_max(signal_struct &signal, int n);
 
   
 int main(int argc, char *argv[])
@@ -329,7 +337,7 @@ int main(int argc, char *argv[])
       n++;
       if(n<argc){
         THRESHOLD_MULTIPLICY=atoi(argv[n]);
-        printf("Software threshold multiplicy set to: %i !\n", THRESHOLD_MULTIPLICY);
+        printf("Software threshold multiplicy set to: %3.2f !\n", THRESHOLD_MULTIPLICY);
       }  
       else{
         printf("Missing treshold multiplicy!\n");
@@ -520,16 +528,19 @@ int main(int argc, char *argv[])
     // Print some verbose information
     if (is_in_string(VERBOSE, "p")){ // "p" for progress report
       if (no_of_events != 0) {
-        high_resolution_clock::time_point t_loop_end = high_resolution_clock::now();
-        duration<double, std::milli> dur = ( t_loop_end - t_loop_begin );
         if(NOE%((int)no_of_events/10)==0){
-          cout << "Analysing event: " << NOE << " (" << dur.count()/1000 << "s per cycle)" << endl;
+		      high_resolution_clock::time_point t_loop_end = high_resolution_clock::now();
+		      // duration<double, std::milli> dur = ( t_loop_end - t_loop_begin );
+		      auto duration = duration_cast<milliseconds>( t_loop_end - t_loop_begin ).count();
+          cout << "Analysing event: " << NOE << " (" << duration/1000 << "s per cycle)" << endl;
         } 
       }
       else { 
-        high_resolution_clock::time_point t_loop_end = high_resolution_clock::now();
-        duration<double, std::milli> dur = ( t_loop_end - t_loop_begin );
-        if(NOE%1000 ==0) cout << "Analysing event: " << NOE << " (" << dur.count()/1000 << "s per cycle)" << endl;
+        if(NOE%1000 ==0) {
+		      high_resolution_clock::time_point t_loop_end = high_resolution_clock::now();
+		      auto duration = duration_cast<milliseconds>( t_loop_end - t_loop_begin ).count();
+        	cout << "Analysing event: " << NOE << " (" << duration/1000 << "s per cycle)" << endl;
+        }
       }
       // reset timer 
       t_loop_begin = high_resolution_clock::now();
@@ -635,19 +646,20 @@ void extraction(){
       DETECTOR.get_trace(board, channel, dumm_cont[entry]);
       // Save the entries in the RAW container
       for(int n=0; n<TRACELEN; n++){
-        double dumm = (double) dumm_cont[entry][n];
+        double dumm = (double) dumm_cont[entry][n]; // Has no function but is needed to work (dunno why)
         RAW[entry].trace.push_back((double) dumm_cont[entry][n]);
+        dumm++; // Has no function but is needed to work (dunno why) 
       }
       // Calculate the baseline information for the RAW and RAW_Calib
-      RAW[entry].base.mean = array_mean(0,BASELINE_CUT,RAW[entry].trace);
+      RAW[entry].base.mean = array_mean(RAW[entry].trace, 0,BASELINE_CUT);
       // Already subtract the baseline from the signals
       for (int n = 0; n<TRACELEN; n++){
         RAW[entry].trace[n] -= RAW[entry].base.mean;
       }
       // Recalculate the baseline information for the RAW and RAW_Calib
-      RAW[entry].base.mean = array_mean(0,BASELINE_CUT,RAW[entry].trace);
+      RAW[entry].base.mean = array_mean(RAW[entry].trace, 0,BASELINE_CUT);
       // Now calculate the std and TH for the baselines
-      RAW[entry].base.std = array_std(0, BASELINE_CUT,RAW[entry].base.mean,RAW[entry].trace);
+      RAW[entry].base.std = array_std(RAW[entry].trace,0, BASELINE_CUT,RAW[entry].base.mean);
       RAW[entry].base.TH = THRESHOLD_MULTIPLICY * RAW[entry].base.std; 
     }
   }    
@@ -743,294 +755,145 @@ void extraction(){
         }
       }
     }
-  } 
-  // Calculate the RAW_CALIB baseline statistics
+  }
+
+  for(int board=1; board<=BOARDS; board++){
+    for(int channel=0; channel<8; channel++){
+      // Convert the board channel to overall channel 
+      entry = (board-1)*8 + channel;
+      RAW[entry].CFD.trace.clear();
+      RAW[entry].CFD.trace = CFD(RAW[entry].trace);
+    }
+  }
+
+  for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+	  /////////////////////////////////////////////////////
+	  // APPLICATION OF THE FILTER TO RAW_CALIB 
+	  /////////////////////////////////////////////////////
+	  MA[i].trace.clear();
+	  MWD[i].trace.clear();
+	  TMAX[i].trace.clear();
+	  MA[i].trace = MA_filter(RAW_CALIB[i].trace, CALIB.MA_energy[i]);
+	  MWD[i].trace = MWD_filter(RAW_CALIB[i].trace, CALIB.MWD_energy[i]);
+	  TMAX[i].trace = FIR_filter(RAW_CALIB[i].trace, CALIB.TMAX_energy[i]);
+	  /////////////////////////////////////////////////////
+	  // APPLICATION OF THE CONSTANT FRACTION DISCRIMINATOR 
+	  /////////////////////////////////////////////////////
+	  RAW_CALIB[i].CFD.trace.clear();
+	  MA[i].CFD.trace.clear();
+	  MWD[i].CFD.trace.clear();
+	  TMAX[i].CFD.trace.clear();
+	  RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace);
+	  MA[i].CFD.trace = CFD(MA[i].trace);
+	  MWD[i].CFD.trace = CFD(MWD[i].trace);
+	  TMAX[i].CFD.trace = CFD(TMAX[i].trace);
+	}
+  /////////////////////////////////////////////////////
+  // CALCULATE BASELINE STATISTICS 
+  /////////////////////////////////////////////////////
+  // Calculate the baseline statistics
   for (int i = 0; i < (int)RAW_CALIB.size(); i++){
     // Check if channel is valid
     if (RAW_CALIB[i].is_valid == false) continue;
     // otherwise do the calculation
-    RAW_CALIB[i].base.mean = array_mean(0,BASELINE_CUT*RAW_CALIB[i].multis,RAW_CALIB[i].trace);
-    RAW_CALIB[i].base.std = array_std(0, BASELINE_CUT*RAW_CALIB[i].multis,RAW_CALIB[i].base.mean,RAW_CALIB[i].trace);
+    RAW_CALIB[i].base.mean = array_mean(RAW_CALIB[i].trace, 0,BASELINE_CUT*RAW_CALIB[i].multis);
+    RAW_CALIB[i].base.std = array_std(RAW_CALIB[i].trace, 0, BASELINE_CUT*RAW_CALIB[i].multis,RAW_CALIB[i].base.mean);
     RAW_CALIB[i].base.TH = THRESHOLD_MULTIPLICY * RAW_CALIB[i].base.std; 
+    //
+    MA[i].base.mean = array_mean(MA[i].trace, 0,BASELINE_CUT*MA[i].multis);
+    MA[i].base.std = array_std(MA[i].trace, 0, BASELINE_CUT*MA[i].multis,MA[i].base.mean);
+    MA[i].base.TH = THRESHOLD_MULTIPLICY * MA[i].base.std; 
+    //
+    MWD[i].base.mean = array_mean(MWD[i].trace, 0,BASELINE_CUT*MWD[i].multis);
+    MWD[i].base.std = array_std(MWD[i].trace, 0, BASELINE_CUT*MWD[i].multis,MWD[i].base.mean);
+    MWD[i].base.TH = THRESHOLD_MULTIPLICY * MWD[i].base.std; 
+    //
+    TMAX[i].base.mean = array_mean(TMAX[i].trace, 0,BASELINE_CUT*TMAX[i].multis);
+    TMAX[i].base.std = array_std(TMAX[i].trace, 0, BASELINE_CUT*TMAX[i].multis,TMAX[i].base.mean);
+    TMAX[i].base.TH = THRESHOLD_MULTIPLICY * TMAX[i].base.std; 
   }
-
   /////////////////////////////////////////////////////
-  // SAMPLE SIGNAL
+  // EXTRACT FEATURES FROM TRACES
   /////////////////////////////////////////////////////
-  double value = 0.;
   // First the RAW traces
   for(int i=0; i<(int)RAW.size(); i++){
-    for(int n=0; n < TRACELEN; n++){
-      // Extract the maximum
-      if(RAW[i].trace[n]>RAW[i].energy) RAW[i].energy = RAW[i].trace[n];
-      // Calculate the CFD of the trace
-      if (n-DELAY>0) RAW[i].CFD.trace.push_back(RAW[i].trace[n-DELAY] - CFD_fraction * RAW[i].trace[n]);
-      else {RAW[i].CFD.trace.push_back(0);}
-      // Look for the zero crossing point
-      if (n > BASELINE_CUT && n<ENERGY_WINDOW_MAX){
-        if (RAW[i].CFD.trace[n-1] < 0 && RAW[i].CFD.trace[n] > 0 && RAW[i].CFD.Xzero==0){RAW[i].CFD.Xzero=n;}
-      }
-      // Already fill the samples into a histogram for baseline noise estimation
-      if (n < BASELINE_CUT) RAW[i].base.h_samples.hist->Fill(RAW[i].trace[n]);   
+    // Extract the maximum
+  	RAW[i].energy = array_largest(RAW[i].trace, BASELINE_CUT, ENERGY_WINDOW_MAX);
+  	// Look for CFD Zero Crossing
+  	RAW[i].CFD.Xzero = array_zero_xing(RAW[i].CFD.trace, BASELINE_CUT, ENERGY_WINDOW_MAX);
+    // Already fill the samples into a histogram for baseline noise estimation
+    for(int n=0; n < BASELINE_CUT; n++){
+      RAW[i].base.h_samples.hist->Fill(RAW[i].trace[n]);   
     }
   }
 
+	int plot = 0;
+
+  //
   // Then the Filtered traces
 	for(int i=0; i<(int)RAW_CALIB.size(); i++){
+		// Left and Right borders for maximum detection
+		int left = BASELINE_CUT * RAW_CALIB[i].multis;
+		int right = ENERGY_WINDOW_MAX * RAW_CALIB[i].multis;
     // Only extract features from valid channels
     if (RAW_CALIB[i].is_valid == false) continue;
-    /////////////////////////////////////////////////////
-    // BASELINE SECTION
-    /////////////////////////////////////////////////////
-		for(int n=0; n < BASELINE_CUT * RAW_CALIB[i].multis; n++){
-      // MA FILTER
-      value = 0.;
-      // Apply moving average filter to baseline, take care that baseline does NOT filter also parts of the rising edge of signal!
-      if( n - ((L-1)/2) < 1 ){
-        value = awg_MA(RAW_CALIB[i].trace,i, 0, n + (L-1)/2);
-      } 
-      if( n - ((L-1)/2) >= 1 && n + ((L-1)/2) <= RAW_CALIB[i].tracelen ){ 
-        value = awg_MA(RAW_CALIB[i].trace,i, n - ((L-1)/2), n + ((L-1)/2));
-      }
-      if( n + ((L-1)/2) > RAW_CALIB[i].tracelen ){ 
-        value = awg_MA(RAW_CALIB[i].trace, i, n - ((L-1)/2), RAW_CALIB[i].tracelen);
-      }
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.MA_energy[i];
-      // Push sample into array
-      MA[i].trace.push_back(value);
-      MA[i].base.trace.push_back(value); 
-      // MWD FILTER
-      value = 0.;
-      // Apply Moving Window Deconvolution Filter, take care of boundaries
-      if (n == 0 || n == 1){
-        value = RAW_CALIB[i].trace[n];
-      }
-      if (n-M <= 0 && n>1){
-        value = RAW_CALIB[i].trace[n] - RAW_CALIB[i].trace[0] + (1/TAU)*awg_MA(RAW_CALIB[i].trace, i, 0, n-1);        
-      }
-      if (n-M > 0){
-        value = RAW_CALIB[i].trace[n] - RAW_CALIB[i].trace[n-M] + (1/TAU)*awg_MA(RAW_CALIB[i].trace, i, n-M, n-1);
-      }
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.MWD_energy[i];
-      // Push sample into array
-      MWD[i].trace.push_back(value);
-      MWD[i].base.trace.push_back(value);
-      // TMAX Filter 
-      // value = 0.;
-      // // To be implemented
-      // value = RAW_CALIB[i].trace[n];
-      // // Apply energy calibration and SiPM pixel calibration
-      // value *= CALIB.TMAX_energy[i];
-      // // Push sample into array
-      // TMAX[i].trace.push_back(value);
-      // TMAX[i].base.trace.push_back(value);
-		}
-    // Calculate statistics and software threshold for signals
-    MA[i].base.mean = array_mean(0,BASELINE_CUT*RAW_CALIB[i].multis-(L-1)/2,MA[i].base.trace);    
-    MA[i].base.std = array_std(0,BASELINE_CUT*RAW_CALIB[i].multis-(L-1)/2,MA[i].base.mean,MA[i].base.trace);
-    MWD[i].base.mean = array_mean(M,BASELINE_CUT*RAW_CALIB[i].multis,MWD[i].base.trace);    
-    MWD[i].base.std = array_std(M,BASELINE_CUT*RAW_CALIB[i].multis,MWD[i].base.mean,MWD[i].base.trace);
-    // TMAX[i].base.mean = array_mean(0,BASELINE_CUT*RAW_CALIB[i].multis,TMAX[i].base.trace);    
-    // TMAX[i].base.std = array_std(0,BASELINE_CUT*RAW_CALIB[i].multis,TMAX[i].base.mean,TMAX[i].base.trace);
-    // Calculate software th based on multiplicy of baseline RMS
-    MA[i].base.TH = THRESHOLD_MULTIPLICY * MA[i].base.std;
-    MWD[i].base.TH = THRESHOLD_MULTIPLICY * MWD[i].base.std; 
-    // TMAX[i].base.TH = THRESHOLD_MULTIPLICY * TMAX[i].base.std; 
-    // Now substract baseline froms samples
-    for (int n = 0; n<BASELINE_CUT*RAW_CALIB[i].multis; n++ ){
-      MA[i].trace[n] -= MA[i].base.mean;
-      MWD[i].trace[n] -= MWD[i].base.mean;
-      // TMAX[i].trace[n] -= TMAX[i].base.mean;
+    // Search for maximum and check if valid
+    if ( is_valid_max( RAW_CALIB[i], array_largest(RAW_CALIB[i].trace, left, right) ) == 0 ){
+    	RAW_CALIB[i].energy = RAW_CALIB[i].trace[ array_largest(RAW_CALIB[i].trace, left, right) ];
+    	RAW_CALIB[i].is_signal = 1;
+    	// Only look for the filter traces if raw trace is not a glitch
+	    if ( is_valid_max( MA[i], array_largest(MA[i].trace, left, right) ) == 0 ){
+    		MA[i].energy = MA[i].trace[ array_largest(MA[i].trace, left, right) ];
+    		MA[i].is_signal = 1;
+    	}
+    	else{ MA[i].energy = 0; MA[i].is_signal = 0;}
+	    if ( is_valid_max( MWD[i], array_largest(MWD[i].trace, left, right) ) == 0 ){
+    		MWD[i].energy = MWD[i].trace[ array_largest(MWD[i].trace, left, right) ];
+    		MWD[i].is_signal = 1;
+    	}
+    	else{ MWD[i].energy = 0; MWD[i].is_signal = 0;}
+	    if ( is_valid_max( TMAX[i], array_largest(TMAX[i].trace, left, right) ) == 0 ){
+    		TMAX[i].energy = TMAX[i].trace[ array_largest(TMAX[i].trace, left, right) ];
+    		TMAX[i].is_signal = 1;
+    	}
+    	else{ TMAX[i].energy = 0; TMAX[i].is_signal = 0;}
     }
-    /////////////////////////////////////////////////////
-    // SIGNAL REGION
-    /////////////////////////////////////////////////////
-    for(int n=BASELINE_CUT*RAW_CALIB[i].multis; n<ENERGY_WINDOW_MAX*RAW_CALIB[i].multis; n++){
-      // Check if new value is higher than previous max value and above TH
-      if(RAW_CALIB[i].trace[n]>RAW_CALIB[i].energy){
-        // If glitch filter is not activated or trace is almost at the and of range:
-        if (GLITCH_FILTER == false){// || n+GLITCH_FILTER_RANGE >= TRACELEN){
-          RAW_CALIB[i].energy=RAW_CALIB[i].trace[n];
-        }
-        // If glitch filter is activated
-        else{
-          int is_glitch_array[GLITCH_FILTER_RANGE];
-          int is_glitch = 1;
-          // Check for the next few samples if all are above threshold
-          for(int k=n; k<n+GLITCH_FILTER_RANGE; k++){
-            // If k-th sample is greater than TH, then save 0 in array
-            // Test with RAW signal because RAW_CALIB is not yet calculated
-            if (abs(RAW_CALIB[i].trace[k])>RAW_CALIB[i].base.TH){
-              is_glitch_array[k-n] = 1;
-            }
-            // If not, then set it save 1 in array
-            else{
-              is_glitch_array[k-n] = 0;
-            }
-          }
-          // Check of samples vary around baseline TH 
-          for(int k=0; k<GLITCH_FILTER_RANGE; k++){
-            is_glitch *= is_glitch_array[k]; 
-          }
-          // If not a glitch, save energy
-          if (is_glitch==1){
-            RAW_CALIB[i].energy = RAW_CALIB[i].trace[n];
-          }
-        }
-      }
-      // MA FILTER
-      value = 0.;
-      // Continue with calculating the moving average (MA)
-      if( n - ((L-1)/2) >= 1 && n + ((L-1)/2) <= RAW_CALIB[i].tracelen ){ 
-        value = awg_MA(RAW_CALIB[i].trace, i, n - ((L-1)/2), n + ((L-1)/2));
-      }
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.MA_energy[i];
-      // Push sample into array
-      MA[i].trace.push_back(value);
-      // Look for maximum
-      if (MA[i].trace[n] > MA[i].energy && MA[i].trace[n]>MA[i].base.TH){
-        MA[i].energy=MA[i].trace[n];
-      }
-      // MWD FILTER
-      value = 0.;
-      // Apply Moving Window Deconvolution Filter, take care of boundaries
-      if (n == 0 || n == 1){
-        value = RAW_CALIB[i].trace[n];
-      }
-      if (n-M <= 0 && n>1){
-        value = RAW_CALIB[i].trace[n] - RAW_CALIB[i].trace[0] + (1/TAU)*awg_MA(RAW_CALIB[i].trace, i, 0, n-1);        
-      }
-      if (n-M > 0){
-        value = RAW_CALIB[i].trace[n] - RAW_CALIB[i].trace[n-M] + (1/TAU)*awg_MA(RAW_CALIB[i].trace, i, n-M, n-1);
-      }
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.MWD_energy[i];
-      // Push sample into array
-      MWD[i].trace.push_back(value);
-      // Look for maximum
-      if (MWD[i].trace[n] > MWD[i].energy && MWD[i].trace[n]>MWD[i].base.TH){
-        MWD[i].energy=MWD[i].trace[n];
-      }
-      // TMAX FILTER
-      // value = 0.;
-      // // To be implemented
-      // value = RAW_CALIB[i].trace[n];
-      // // Apply energy calibration and SiPM pixel calibration
-      // value *= CALIB.TMAX_energy[i];
-      // // Push sample into array
-      // TMAX[i].trace.push_back(value);
-      // // Look for maximum
-      // if (TMAX[i].trace[n] > TMAX[i].energy && TMAX[i].trace[n]>TMAX[i].base.TH){
-      //   TMAX[i].energy=TMAX[i].trace[n];
-      // }
+    else { 
+    	RAW_CALIB[i].energy = 0; RAW_CALIB[i].is_signal = 0;
+    	MA[i].energy = 0; MA[i].is_signal = 0;
+    	MWD[i].energy = 0; MWD[i].is_signal = 0;
+    	TMAX[i].energy = 0; TMAX[i].is_signal = 0;
     }
-    /////////////////////////////////////////////////////
-    // REST OF SIGNAL
-    /////////////////////////////////////////////////////
-    for(int n=ENERGY_WINDOW_MAX*RAW_CALIB[i].multis; n<RAW_CALIB[i].tracelen; n++){
-      // MA FILTER
-      value = 0.;
-      // Continue with calculating the moving average (MA)
-      if( n - ((L-1)/2) >= 1 && n + ((L-1)/2) <= RAW_CALIB[i].tracelen ){ 
-        value = awg_MA(RAW_CALIB[i].trace, i, n - ((L-1)/2), n + ((L-1)/2));
-      } 
-       if( n >= RAW_CALIB[i].tracelen - ((L-1)/2) ){ 
-        value = awg_MA(RAW_CALIB[i].trace, i, n - ((L-1)/2), n);
-      }
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.MA_energy[i];
-      // Push sample into array
-      MA[i].trace.push_back(value);
-      // MWD FILTER
-      value = 0.;
-      // Apply Moving Window Deconvolution Filter, take care of boundaries
-      if (n == 0 || n == 1){
-        value = RAW_CALIB[i].trace[n];
-      }
-      if (n-M <= 0 && n>1){
-        value = RAW_CALIB[i].trace[n] - RAW_CALIB[i].trace[0] + (1/TAU)*awg_MA(RAW_CALIB[i].trace, i, 0, n-1);        
-      }
-      if (n-M > 0){
-        value = RAW_CALIB[i].trace[n] - RAW_CALIB[i].trace[n-M] + (1/TAU)*awg_MA(RAW_CALIB[i].trace, i, n-M, n-1);
-      }
-      // Apply energy calibration and SiPM pixel calibration
-      value *= CALIB.MWD_energy[i];
-      // Push sample into array
-      MWD[i].trace.push_back(value);
-      // TMAX Filter
-      // value = 0.;
-      // // To be implemented
-      // value = RAW_CALIB[i].trace[n];
-      // // Calibrate 
-      // value *= CALIB.TMAX_energy[i];
-      // TMAX[i].trace.push_back(0);
+    // Calculate the CFD traces
+    RAW_CALIB[i].CFD.trace.clear();
+    RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace);
+    MA[i].CFD.trace.clear();
+    MA[i].CFD.trace = CFD(MA[i].trace);
+    MWD[i].CFD.trace.clear();
+    MWD[i].CFD.trace = CFD(MWD[i].trace);
+    TMAX[i].CFD.trace.clear();
+    TMAX[i].CFD.trace = CFD(TMAX[i].trace);
+  
+
+    if ( is_valid_max( RAW_CALIB[i], array_largest(RAW_CALIB[i].trace, left, right) ) == 2 ){
+    	if ( i == 4 ) plot = 1;
     }
-    /////////////////////////////////////////////////////
-    // APPLICATION OF THE FIR FILTER TO RAW_CALIB 
-    /////////////////////////////////////////////////////
-    TMAX[i].trace.clear();
-    TMAX[i].trace = fir(RAW_CALIB[i].trace);
-    for (int n = BASELINE_CUT; n < ENERGY_WINDOW_MAX; n++){
-      if (TMAX[i].trace[n] > TMAX[i].energy && TMAX[i].trace[n] > TMAX[i].base.TH) TMAX[i].energy = TMAX[i].trace[n];
+    if ( is_valid_max( RAW_CALIB[i], array_largest(RAW_CALIB[i].trace, left, right) ) == 0 ){
+    	if ( i == 4 && RAW_CALIB[i].energy > 4000) plot = 2;
     }
 
-    /////////////////////////////////////////////////////
-    // EXTRACTION OF ENERGY FEATURES AND SIGNAL THRESHOLD 
-    /////////////////////////////////////////////////////
-    if ( RAW_CALIB[i].energy > RAW_CALIB[i].base.TH) {
-      RAW_CALIB[i].is_signal = 1;
-      MA[i].is_signal = 1;
-      MWD[i].is_signal = 1;
-      TMAX[i].is_signal = 1;
-    }
-    else{
-      RAW_CALIB[i].energy = 0;
-      MA[i].energy = 0;
-      MWD[i].energy = 0;
-      TMAX[i].energy = 0;
-
-      RAW_CALIB[i].is_signal = 0;
-      MA[i].is_signal = 0;
-      MWD[i].is_signal = 0;
-      TMAX[i].is_signal = 0;
-    }
-    /////////////////////////////////////////////////////
-    // APPLYING CONSTANT FRACTION DISCRIMINATOR
-    /////////////////////////////////////////////////////
-    for (int n = 0; n<RAW_CALIB[i].tracelen; n++){
-      // Calculate the CFD signal of the RAW signals 
-      if (n-DELAY>0){
-        RAW_CALIB[i].CFD.trace.push_back(RAW_CALIB[i].trace[n-DELAY] - CFD_fraction * RAW_CALIB[i].trace[n]);
-        MA[i].CFD.trace.push_back(MA[i].trace[n-DELAY] - CFD_fraction * MA[i].trace[n]);
-        MWD[i].CFD.trace.push_back(MWD[i].trace[n-DELAY] - CFD_fraction * MWD[i].trace[n]);
-        TMAX[i].CFD.trace.push_back(TMAX[i].trace[n-DELAY] - CFD_fraction * TMAX[i].trace[n]);
-      }
-      else{
-        RAW_CALIB[i].CFD.trace.push_back(0);
-        MA[i].CFD.trace.push_back(0);
-        MWD[i].CFD.trace.push_back(0);
-        TMAX[i].CFD.trace.push_back(0);
-      }
-      // Normalize CFD 
-      // RAW[i].CFD.trace[n] *= (double)(1000/RAW[i].energy);
-      // RAW_CALIB[i].CFD.trace[n] *= (double)(1000/RAW_CALIB[i].energy);
-      // MA[i].CFD.trace[n] *= (double)(1000/MA[i].energy);
-      // MWD[i].CFD.trace[n] *= (double)(1000/MWD[i].energy);
-      // TMAX[i].CFD.trace[n] *= (double)(1000/TMAX[i].energy);
-
-      // Look for the sample, where the CFD signal intersects the x-axis for later interpolation analysis
-      // All samples after baseline cut should be negative at first and then turn positive once zero crossing point is passed
-      if (n > BASELINE_CUT*RAW_CALIB[i].multis && n<ENERGY_WINDOW_MAX*RAW_CALIB[i].multis){
-        if (RAW_CALIB[i].CFD.trace[n-1] < 0 && RAW_CALIB[i].CFD.trace[n] > 0 && RAW_CALIB[i].CFD.Xzero==0){RAW_CALIB[i].CFD.Xzero=n;}
-        if (MA[i].CFD.trace[n-1] < 0 && MA[i].CFD.trace[n] > 0 && MA[i].CFD.Xzero==0){MA[i].CFD.Xzero=n;}
-        if (MWD[i].CFD.trace[n-1] < 0 && MWD[i].CFD.trace[n] > 0 && MWD[i].CFD.Xzero==0){MWD[i].CFD.Xzero=n;}
-        if (TMAX[i].CFD.trace[n-1] < 0 && TMAX[i].CFD.trace[n] > 0 && TMAX[i].CFD.Xzero==0){TMAX[i].CFD.Xzero=n;}          
-      }
-    }
   }
+
+  if (plot == 1){
+    hfile->cd("JUNK/");
+    plot_waves_compare("PLOT1", "TRACE");
+  }
+  if (plot == 2){
+    hfile->cd("JUNK/");
+    plot_waves_compare("PLOT2", "TRACE");
+  }
+
+
   /////////////////////////////////////////////////////
   // TEST FOR COINCIDENCE
   /////////////////////////////////////////////////////
@@ -1113,14 +976,14 @@ void extraction(){
       }
     }
     // Enter the untagged energy in the general energy histogram
-    for (int i = 0; i < (int)RAW_CALIB.size(); i++){
-      if (RAW_CALIB[i].is_signal == false){
-        RAW_CALIB[i].energy = 0.0;
-        MA[i].energy = 0.0;
-        MWD[i].energy = 0.0;
-        TMAX[i].energy = 0.0;
-      }
-    }
+    // for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+    //   if (RAW_CALIB[i].is_signal == false){
+    //     RAW_CALIB[i].energy = 0.0;
+    //     MA[i].energy = 0.0;
+    //     MWD[i].energy = 0.0;
+    //     TMAX[i].energy = 0.0;
+    //   }
+    // }
     // Enter the tagged energy in the right histogram
     for (int k = 0; k < N_E_WINDOW; k ++){
       // If the right tagger channel is found
@@ -1252,7 +1115,7 @@ void multis_calib(){
         RAW[entry].trace.push_back((double) dumm_cont[entry][n] * CALIB.multis[entry]);
       }
       // Calculate the baseline information for the RAW and RAW_Calib
-      RAW[entry].base.mean = array_mean(0,BASELINE_CUT,RAW[entry].trace);
+      RAW[entry].base.mean = array_mean(RAW[entry].trace,0,BASELINE_CUT);
       // Already subtract the baseline from the signals
       for (int n = 0; n<TRACELEN; n++){
         RAW[entry].trace[n] -= RAW[entry].base.mean;
@@ -1260,7 +1123,7 @@ void multis_calib(){
       // Recalculate the baseline information for the RAW and RAW_Calib
       // RAW[entry].base.mean = array_mean(0,BASELINE_CUT,RAW[entry].trace);
       // Now calculate the std and TH for the baselines
-      RAW[entry].base.std = array_std(0, BASELINE_CUT,RAW[entry].base.mean,RAW[entry].trace);
+      RAW[entry].base.std = array_std(RAW[entry].trace, 0, BASELINE_CUT,RAW[entry].base.mean);
       RAW[entry].base.TH = THRESHOLD_MULTIPLICY * RAW[entry].base.std; 
     }
   }
@@ -1298,9 +1161,8 @@ void multis_calib(){
   /////////////////////////////////////////////////////
   // SAMPLE ONLY THE MULTISAMPLED SIGNALS
   /////////////////////////////////////////////////////
-  // Variable declaration for feature extraction
   int is_signal[CHANNELS];
-  int is_coinc = 1;
+  // Variable declaration for feature extraction
   for(int i=0; i<CHANNELS; i++){
     // only look at valid channels
     if (RAW[i].is_valid == false) {
@@ -1358,6 +1220,7 @@ void multis_calib(){
     // EXTRACTION OF FEATURES 
     /////////////////////////////////////////////////////
     if (RAW[i].energy < RAW[i].base.TH){ is_signal[i] = 0; }
+    else { is_signal[i]++; }
   }
   /////////////////////////////////////////////////////
   // TEST FOR COINCIDENCE ONLY IN THE MULTISAMPLED CHANNELS
@@ -1888,14 +1751,14 @@ void plot_waves(vector<signal_struct> &array, char const *name, char const *modu
 }
 
 void plot_waves_compare(char const *name, char const *modus) {
-  int tracelen = (int)RAW_CALIB[0].trace.size();
   // Canvas for signals split into channels
   TCanvas *c_split = new TCanvas("c_split","Wave_forms",10,10,1280,1024);
   c_split->Divide((int)MAPPING[0].size(), (int)MAPPING.size());
   // Set grid
   c_split->SetGrid();
   // Now loop through all channel
-  for(Int_t i=0; i < tracelen; i++){   //Channel loop 
+  for(Int_t i=0; i < (int)RAW_CALIB.size(); i++){   //Channel loop 
+    int tracelen = (int)RAW_CALIB[i].trace.size();
     // Only paint vaild channels / non-empty channels
     if (RAW_CALIB[i].is_valid == false || tracelen == 0) continue;
       // Create a multigraph canvas
@@ -1940,11 +1803,13 @@ void plot_waves_compare(char const *name, char const *modus) {
         wave_x[3][n] = n * TMAX[i].sample_t; // Calibrate to the sampling rate
       }
       for (int j = 0; j < 4; j++){
+      	if ( j == 1 || j == 2) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
     } 
     else{ printf("ERROR (plot_waves): Plot option invalid\n");}
     for (int j = 0; j < 4; j++){
+    	if (j == 1 || j == 2) continue;
       tg_combined[j]->SetLineColor(j+1);
       tg_combined[j]->SetMarkerColor(j+1);
       tg_combined[j]->SetMarkerSize(0.35);
@@ -2219,29 +2084,13 @@ void plot_timing_hist(vector<signal_struct> &signal, char const *path){
   }
 }
 
-
-double awg_MA(const vector<double> &array, int ch, int down, int up){ 
-  double n_samples=0.0;   
-  double summe=0.0;
-  for(int k=down; k<up; k++){
-    n_samples++;
-  	summe+=array[k];
-  }
-  if (n_samples != 0){
-    return summe/n_samples; 
-  }     			
-  else{
-    return summe;
-  }		
-}          
-
 double randit(int ini){
   if(ini==1) srand(time(NULL));
   return (((rand()%100) -50.) /100.);
 }
 
 // Calculates the mean of all elements between start and end of an array
-double array_mean(int start, int end, const vector<double> &array){
+double array_mean(const vector<double> &array, int start, int end){
   double sum = 0;
   for (int i = start; i<end; i++){
     sum += array[i];
@@ -2250,12 +2099,48 @@ double array_mean(int start, int end, const vector<double> &array){
 }
 
 // Calculates the std of all elements between start and end of an array
-double array_std(int start, int end, double mean, const vector<double> &array){
+double array_std(const vector<double> &array, int start, int end, double mean){
   double sum = 0;
   for (int i = start; i<end; i++){
     sum += (double) pow(array[i]-mean, 2.);
   }
   return (double) TMath::Sqrt(sum/(end-start));
+}
+
+// Return index of the largest value in array
+int array_largest(vector<double> &array, int lower, int upper){
+	//
+	int index = 0;
+	int max = 0;
+	// Check boundaries
+	if (lower < 0) lower = 0;
+	if (upper > (int)array.size()) upper = (int)array.size(); 
+	// Loop over all indices
+	for (int n = lower; n < upper; n++){
+		//
+		if ( array[n] > max ) {
+			max = array[n];
+			index = n;
+		}
+	}
+	// 
+	return(index);
+}
+
+// Looks for the first zero crossing between lower and upper of an array, returns index right to the xing
+int array_zero_xing(vector<double> &array, int lower, int upper){
+	// Check boundaries
+	if (lower < 0) lower = 0;
+	if (upper > (int)array.size()) upper = (int)array.size(); 
+	// Loop over all indices
+	for (int n = lower; n < upper; n++){
+		//
+    if ( array[n-1] < 0 && array[n] > 0 ){
+    	return(n);
+    }
+	}
+	// if no xing is found, return 0
+	return(0);
 }
 
 // Function for initializing the global signal contaiers
@@ -2665,7 +2550,7 @@ Double_t langaufun(Double_t *x, Double_t *par) {
   //This shift is corrected within this function, so that the actual
   //maximum is identical to the MP parameter.
   // Numeric constants
-  Double_t invsq2pi = 0.3989422804014;   // (2 pi)^(-1/2)
+  // Double_t invsq2pi = 0.3989422804014;   // (2 pi)^(-1/2)
   Double_t mpshift  = -0.22278298;       // Landau maximum location
   // Control constants
   Double_t np = 100.0;      // number of convolution steps
@@ -2983,7 +2868,7 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
 // Fast linear regression fit 
 // Source: http://stackoverflow.com/questions/5083465/fast-efficient-least-squares-fit-algorithm-in-c
 bool linreg(vector<double> &x, vector<double> &y, double *m, double *b){
-  double r; // Correlation coefficient
+  // double r; // Correlation coefficient
   int n = (int)x.size();
   double sumx = 0.0;                      /* sum of x     */
   double sumx2 = 0.0;                     /* sum of x**2  */
@@ -3006,13 +2891,14 @@ bool linreg(vector<double> &x, vector<double> &y, double *m, double *b){
   }
   *m = (n * sumxy  -  sumx * sumy) / denom;
   *b = (sumy * sumx2  -  sumx * sumxy) / denom;
-  r = (sumxy - sumx * sumy / n) /    /* compute correlation coeff */
-        sqrt((sumx2 - pow(sumx, 2.)/n) *
-        (sumy2 - pow(sumy, 2.)/n));
+  // r = (sumxy - sumx * sumy / n) /    /* compute correlation coeff */
+  //       sqrt((sumx2 - pow(sumx, 2.)/n) *
+  //       (sumy2 - pow(sumy, 2.)/n));
   return true; 
 }
 
-vector<double> fir(vector<double> trace){
+// Finite Impulse Response Filter
+vector<double> FIR_filter(vector<double> &trace, double calib){
   // Return array
   vector<double> filtered;
   // Number of tabs
@@ -3029,12 +2915,80 @@ vector<double> fir(vector<double> trace){
       if ( (n-k) < 0 ) continue;
       sum += trace[n - k] * FIR_COEF[k];
     }
-    // Push back the convolution sum
+    // Push back the convolution sum multiplied with the energy calibration
+    sum *= calib;
     filtered.push_back(sum);
   }
   return filtered;
 }
 
+// Moving average Filter
+vector<double> MA_filter(vector<double> &trace, double calib){
+  // Return array
+  vector<double> filtered;
+  double value = 0;
+  // For each sample of the trac do:
+	for(int n=0; n < (int)trace.size(); n++){
+		value = 0;
+		// Take care of boundary conditions
+		// Left boundary
+	  if( n - ((L-1)/2) < 1 ){
+	    value = array_mean(trace, 0, n + (L-1)/2);
+	  } 
+	  // Center values
+	  if( n - ((L-1)/2) >= 1 && n + ((L-1)/2) <= (int)trace.size() ){ 
+	    value = array_mean(trace, n - ((L-1)/2), n + ((L-1)/2));
+	  }
+	  // Right boundary
+	  if( n + ((L-1)/2) > (int)trace.size() ){ 
+	    value = array_mean(trace, n - ((L-1)/2), (int)trace.size());
+	  }
+	  // Calibration
+	  value *= calib;
+	  // Save value in array
+	  filtered.push_back(value);
+	}
+	return filtered;
+}
+
+// Moving average Filter
+vector<double> MWD_filter(vector<double> &trace, double calib){
+  // Return array
+  vector<double> filtered;
+  double value = 0;
+  // For each sample of the trac do:
+	for(int n=0; n < (int)trace.size(); n++){
+		value = 0;
+    // Apply Moving Window Deconvolution Filter, take care of boundaries
+    if (n == 0 || n == 1){
+      value = trace[n];
+    }
+    if (n-M <= 0 && n>1){
+      value = trace[n] - trace[0] + (1/TAU)*array_mean(trace, 0, n-1);        
+    }
+    if (n-M > 0){
+      value = trace[n] - trace[n-M] + (1/TAU)*array_mean(trace, n-M, n-1);
+    }
+	  // Calibration
+	  value *= calib;
+	  // Save value in array
+	  filtered.push_back(value);
+	}
+	return filtered;
+}
+
+// Digital Constant Fraction Discriminator 
+vector<double> CFD(vector<double> &trace){
+  // Return array
+  vector<double> converted;
+  // For each sample of the trac do:
+	for(int n=0; n < (int)trace.size(); n++){
+    // Calculate the Constant Fraction Trace
+		if (n-DELAY>0) converted.push_back(trace[n-DELAY] - CFD_fraction * trace[n]);
+    else {converted.push_back(0);}	  // Calibration
+	}
+	return converted;
+}
 
 
 // Prints usage informaion for user
@@ -3188,6 +3142,7 @@ bool read_config(const char *file){
         if(strcmp(key.c_str(), "NB") == 0) NB = stoi(value);
         // if(strcmp(key.c_str(), "MULTIS") == 0) MULTIS = stoi(value);
         if(strcmp(key.c_str(), "THRESHOLD_MULTIPLICY") == 0) THRESHOLD_MULTIPLICY = stod(value);
+        if(strcmp(key.c_str(), "SATURATION_FILTER") == 0) SATURATION_FILTER = stoi(value);
         if(strcmp(key.c_str(), "GLITCH_FILTER") == 0) GLITCH_FILTER = stoi(value);
         if(strcmp(key.c_str(), "GLITCH_FILTER_RANGE") == 0) GLITCH_FILTER_RANGE = stoi(value);
         // Feature extraction algorithm parameters
@@ -3377,4 +3332,116 @@ bool is_in_string(char *character, char const *letter){
   // cout << character << " " << letter << " " << found << endl;
   if ((int)found == -1) return false;
   else return true;
+}
+
+// Checks if datapoint (assumed maximum) is glitch
+bool is_glitch(vector<double> &trace, double TH, int n){
+  int is_glitch_array[GLITCH_FILTER_RANGE];
+  int is_glitch = 1;
+  // Check for the next few samples if all are above threshold
+  for(int k=n; k<n+GLITCH_FILTER_RANGE; k++){
+    // If k-th sample is greater than TH, then save 0 in array
+    // Test with RAW signal because RAW_CALIB is not yet calculated
+    if ( abs(trace[k]) > TH){
+      is_glitch_array[k-n] = 1;
+    }
+    // If not, then set it save 1 in array
+    else{
+      is_glitch_array[k-n] = 0;
+    }
+  }
+  // Check of samples vary around baseline TH 
+  for(int k=0; k<GLITCH_FILTER_RANGE; k++){
+    is_glitch *= is_glitch_array[k]; 
+  }
+  // If not a glitch, return false
+  if (is_glitch==1){
+    return false;
+  }
+  // If it's a glitch return true
+  else{return(true);}
+}
+
+// Checks if datapoint (assumed maximum) is saturation
+	// Look at k% how wide the pulse is and decide
+bool is_saturation(signal_struct &signal, int n){
+	int max = signal.trace[n];
+	double fraction = 0.9;
+	int width = 3;
+	int rising_width = 4;
+	int width_left = 0;
+	int width_right = 0;
+	int rising_left = 0;
+	int rising_right = n;
+	double sat_threshold = 4000;
+	// Search for the rising edge crossing the kth % of the maximum
+	for (int i = 0; i < ENERGY_WINDOW_MAX; i++){
+		if ( signal.trace[i] > fraction * max) {
+			width_left = i;
+			break;
+		}
+	}
+	// Search for the falling edge crossing the kth % of the maximum
+	for (int i = width_left; i < ENERGY_WINDOW_MAX; i++){
+		if ( signal.trace[i] < fraction * max) {
+			width_right = i;
+			break;
+		}
+	}
+	// Check how fast the rising edge is by going left starting at max
+	for (int i = 0; i < n; i++){
+		if ( signal.trace[n-i] < signal.base.TH ){
+			rising_left = n-i;
+			break;
+		}
+	}
+	// now check if the width is smaller than the typical PWO shape width 
+	// printf("%d\n", width_right-width_left);
+	if ( width_right - width_left < width && // Width at k% smaller than normal signal
+			 signal.trace[n] > sat_threshold && // Max larger than certain fixed TH
+			 rising_right - rising_left < rising_width // Rising edge smaller than normal signal
+			){
+		// printf("%3.2f %d %d\n", trace[n], width_left, width_right);
+		return(true);
+	} 
+	else{
+		return(false);		
+	}
+}
+
+
+// Test, if the sample is a valid sample and above TH.
+// 	Includes glitch and saturation filter
+// Return parameter code: 
+		// 0: Is valid max 
+		// 1: Glitch detected 
+		// 2: Saturation detected 
+		// 3: Trace is not not above TH
+int is_valid_max(signal_struct &signal, int n){
+	// Test if the current sample is larger than the max energy
+  if(signal.trace[n] > signal.base.TH){
+    // If glitch filter and saturation filer are not active
+    if (GLITCH_FILTER == false && SATURATION_FILTER == false){
+      return(0);
+    }
+    // FILTER
+    else{
+    	// Glitch filter
+    	//
+    	if (GLITCH_FILTER == true){
+        if (is_glitch(signal.trace, signal.base.TH, n)){
+        	return(1);
+        }
+    	}
+    	// Saturation filter
+    	//
+    	if (SATURATION_FILTER == true){
+        if (is_saturation(signal, n)){
+        	return(2);
+        }
+    	}
+    	return(0);
+    }
+  }
+  return(3);
 }
