@@ -17,9 +17,6 @@ modified for single board / self triggered readout
 #include <chrono> // measuring high-res execution time 
 #include "Math/Interpolator.h"
 #include "Math/Polynomial.h"
-
-#include "simplex.h"
-
 #include "TROOT.h"
 #include "TMath.h"
 #include "TFile.h"
@@ -43,9 +40,21 @@ modified for single board / self triggered readout
 #include "TGraphPainter.h"
 #include "TSpectrum.h"  // For spectrum and peak analysis
 #include "TVirtualFitter.h" // fitting
+#include "TPaveStats.h"
+// RooFit Framework
+#include "RooAddPdf.h"
+#include "RooDataSet.h"
+#include "RooPlot.h"
+#include "RooRealVar.h"
+#include "RooDataHist.h"
+#include "TLatex.h"
+#include "RooNovosibirsk.h"
+
+using namespace RooFit ;
 
 using namespace std;
-using namespace std::chrono;
+using namespace chrono;
+using namespace RooFit;
 
 
 int doof = 0;
@@ -77,6 +86,9 @@ Int_t NB = 2;
 Int_t ENERGY_NORM = 2500; // Cosmis peak will be normed to this channel
 int NB_ACT_CHANNELS = 0; // Number of active channels
 double GENERAL_SCALING = 1.; // General histogram scaling for energy calibration
+int EXTRACT_PROTO=1; // Extract proto trace and save it to file
+double LOWER_RATIO = 0.;
+double UPPER_RATIO = 100000.;
 // Multi sampling calibration
 int MULTIS = 1;
 bool MULTIS_CALIB_MODE = false;
@@ -92,6 +104,7 @@ int M=5; // Window for MWD
 double TAU=1.; // Impact value for MA part of MWD
 int nTabs = 20; // Number of tabs for the FIR filter
 vector<double> FIR_COEF; // Array for the FIR filter coefficients
+double LIN_COMP = 0.; // Fit Parameter for linearizing the detector energy sum
 // global counters
 unsigned int NOE=0;
 
@@ -130,10 +143,12 @@ struct calib_struct
   vector<double> MA_energy; // calibration between different xtals
   vector<double> MWD_energy; // calibration between different xtals
   vector<double> TMAX_energy; // calibration between different xtals
+  vector<double> NMO_energy; // calibration between different xtals
   hist_struct_TH1D h_RAW_energy; // hist the calibration parameters
   hist_struct_TH1D h_MA_energy;
   hist_struct_TH1D h_MWD_energy;
   hist_struct_TH1D h_TMAX_energy;
+  hist_struct_TH1D h_NMO_energy;
 };
 
 struct multis_norm_struct
@@ -176,6 +191,7 @@ struct baseline_struct
   double std = 0.;
   // Store the thresholds 
   double TH = 0.;
+  double TH_multiplicity = 0.;
   hist_struct_TH1D h_mean;
   hist_struct_TH1D h_std;
   hist_struct_TH1D h_samples;
@@ -243,7 +259,9 @@ struct tagger_struct
   int multiples_per_count[16]; // Multiples per counts 
   int multiples_per_channel[16]; // Multiples per tagger channel
   vector<hist_struct_TH1D> t_hist; // Histogram for tagger timing distribution
+  hist_struct_TH2D h_tagger_vs_energy; // Tagger time vs energy in ECAL
   int cut[16]; // Mean tagger time for cutting times off the mean time
+  double energy[16] = {41.3,44.8,51.6,69.14,79.3,99.8,149.37,200.,249.8,350.0,450.2,550.37,650.3,699.7,724.4,725.5}; // Energies corresponding to each tagger channel
 };
 
 
@@ -253,20 +271,27 @@ vector<signal_struct> RAW_CALIB;
 vector<signal_struct> MA;
 vector<signal_struct> MWD;
 vector<signal_struct> TMAX;
+vector<signal_struct> NMO; // NMO: Nelder-Mead Optimization Algorithm
 //
 vector<signal_struct> ECAL25; // Sum of all channels, only one element in vector
 //
+// Proto trace
+vector<signal_struct> PROTO;
 // Struct to save all multi sampling renormalisation histograms and parameters
 // Dimensions: [eff. channels][MULTIS][MULTIS]
 vector<vector<vector<multis_norm_struct> > > MULTIS_NORM;
 // Build root file
 TFile *hfile;
+// output stream for writing the proto trace
+ofstream *proto_out;
 // Build the calibration struct
 calib_struct CALIB;
 // Build the Mapping struct
 vector<vector<mapping_struct> > MAPPING;
 // Initialize a tagger
 tagger_struct TAGGER;
+// Container for costum multiplicities
+vector<double> TH_MULTIPLICITY;
 
 // Definition of functions
 void extraction();
@@ -281,18 +306,23 @@ void plot_timing_hist(vector<signal_struct> &signal, char const *path);
 void plot_multis_hist();
 void plot_TH2D_hist(TH2D *hist, char const *path, const char *name);
 void plot_TH2D_hist_graph(TH2D *hist, vector<double> trace, char const *path, const char *name);
+void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *name);
+void plot_energy_resolution(signal_struct &signal, char const *path, const char *name);
 void plot_trace(vector<double> &trace, char const *name, char const *modus);
 double randit(int ini=0);
 double array_mean(const vector<double> &array, int start, int end);
 double array_std(const vector<double> &array, int start, int end, double mean);
 int array_largest(vector<double> &array, int lower, int upper);
 int array_zero_xing(vector<double> &array, int lower, int upper);
-double array_compare(vector<double> &array1, vector<double> &array2, vector<double> &weigths, int start, int end, int debug);
+double array_compare(vector<double> &array1, vector<double> &array2, vector<double> &weigths, vector<double> &par, int start, int end, int debug);
 vector<double> array_adjust(vector<double> &array, vector<double> &x, int debug);
 vector<double> array_sum(vector<double> &array1, vector<double> &array2, double factor);
+vector<double> array_simulate_proto();
+vector<double> array_smooth(vector<double> &array, int s, int L);
 void interpolate(vector<signal_struct> &signal);
 void time_compare(vector<signal_struct> &signal);
 vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
+vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
 void print_usage();
 void build_structure();
 void print_final_statistics();
@@ -308,7 +338,7 @@ void reset_times(vector<vector<time_struct> > &array);
 void init_multis_norm(vector<vector<vector<multis_norm_struct> > > &array, int channels);
 void fill_hists();
 void init_hists(int channels);
-bool read_fir(string file);
+bool read_file(string file);
 bool read_config(char const *file);
 bool linreg(vector<double> &x, vector<double> &y, double *m, double *b);
 // Double_t fpeaks(Double_t *x, Double_t *par);
@@ -319,14 +349,23 @@ Int_t largest_1Dbin(TH1D *hist, Int_t lower, Int_t upper);
 vector<double> FIR_filter(vector<double> &trace, double calib);
 vector<double> MA_filter(vector<double> &trace, double calib);
 vector<double> MWD_filter(vector<double> &trace, double calib);
-vector<double> CFD(vector<double> &trace);
+vector<double> CFD(vector<double> &trace, double multiplier);
 void print_detector_config();
-bool is_in_string(char *character, char const *letter);
+bool is_in_string(char const *character, char const *letter);
 bool is_glitch(vector<double> &trace, double TH, int n);
 bool is_saturation(signal_struct &signal, int n);
 bool baseline_weird(signal_struct &signal);
 int is_valid_max(signal_struct &signal, int n);
 double signal_integral(signal_struct &signal, int debug);
+double polnx(double x, vector<double> &par);
+double log3x(double x, vector<double> &par);
+double ExpDecay1(double x, vector<double> &par);
+double ExpGro1(double x, vector<double> &par);
+Double_t SIPMpixel(Double_t *x, Double_t *par);
+Double_t SIPMlinearize(Double_t x, Double_t A);
+Double_t resolution(Double_t *x, Double_t *par);
+
+#include "simplex.h"
 
   
 int main(int argc, char *argv[])
@@ -338,6 +377,7 @@ int main(int argc, char *argv[])
   ///////////////////////////////////////////////////////////////
   char inputfile[200];
   char outputfile[200];
+  char outputfile_proto_trace[200];
   char configfile[200];
   unsigned int no_of_events=0, do_no_of_events=0;
   int realign_first_NOE=0;
@@ -516,11 +556,11 @@ int main(int argc, char *argv[])
 
   // Print mapping if verbose flag is set
   if (is_in_string(VERBOSE, "c")) print_detector_config();
-  
 
   // Set up detector read out
   DETECTOR.init_readout(inputfile, realign_first_NOE);
   //TRACELEN=DETECTOR.get_maxevents(1);  
+
 
   randit(1);
 
@@ -534,8 +574,21 @@ int main(int argc, char *argv[])
   // Create folder structure
   build_structure();
 
+  // Proto signal is to be extracted
+  if (EXTRACT_PROTO == 1){
+    sprintf(outputfile_proto_trace, "%s_proto_trace.dat", outputfile);
+    proto_out = new ofstream(outputfile_proto_trace);
+    if (proto_out->is_open()){
+      printf("NOTICE(main): Opened proto trace output file %s.\n", outputfile_proto_trace);
+    }
+    else printf("WARNING(statistics): Unable to write proto trace file.\n");
+  }
+
+  // array_simulate_proto();
+
+
   ////////////////////////////////////////////////////////
-  // BUILD HISTOGRAMS
+  // BUILD HISTOGRAMS / LOAD PROTO TRACES FROM FILE
   ////////////////////////////////////////////////////////
 
   // Reset/initialize signal container
@@ -547,9 +600,10 @@ int main(int argc, char *argv[])
     init_signal(MA, CHANNELS_EFF);
     init_signal(MWD, CHANNELS_EFF);
     init_signal(TMAX, CHANNELS_EFF);
+    init_signal(NMO, CHANNELS_EFF);
     // Init the Calorimeter sum (only one element per filter type in the vector)
-    init_signal(ECAL25, 4);
-    // Initialize histograms, done in extra function
+    init_signal(ECAL25, 5);
+    // Initialize histograms, done in extra functionS
     init_hists(CHANNELS_EFF);
   }
   else{
@@ -559,6 +613,31 @@ int main(int argc, char *argv[])
     init_multis_norm(MULTIS_NORM, CHANNELS);
     init_hists(CHANNELS);
   }
+  // Save the Proto Trace 
+  if (EXTRACT_PROTO == 0){
+    for (int i = 0; i<(int)RAW_CALIB.size(); i++){
+      RAW_CALIB[i].proto_trace_fit = PROTO[i].proto_trace_fit;
+    }
+  }
+  // Save costum threshold multiplicies
+  if (TH_MULTIPLICITY.size() != RAW_CALIB.size() && THRESHOLD_MULTIPLICY == -1){
+    printf("ERROR: Check your costum threshold multiplicies from the ini file!\n");
+    return(-1);
+  }
+  if (THRESHOLD_MULTIPLICY == -1){
+    for (int i = 0; i<(int)RAW_CALIB.size(); i++){
+      RAW_CALIB[i].base.TH_multiplicity = TH_MULTIPLICITY[i];
+    }
+  }
+  else{
+    for (int i = 0; i<(int)RAW_CALIB.size(); i++){
+      RAW_CALIB[i].base.TH_multiplicity = THRESHOLD_MULTIPLICY;
+    }
+  }
+
+
+  printf("INITIALIZATION COMPLETED! BEGIN READOUT!\n");
+
 
 
   /////////////////////////////////////////////////////
@@ -579,7 +658,7 @@ int main(int argc, char *argv[])
       if (no_of_events != 0) {
         if(NOE%((int)no_of_events/10)==0){
 		      high_resolution_clock::time_point t_loop_end = high_resolution_clock::now();
-		      // duration<double, std::milli> dur = ( t_loop_end - t_loop_begin );
+		      // duration<double, milli> dur = ( t_loop_end - t_loop_begin );
 		      auto duration = duration_cast<milliseconds>( t_loop_end - t_loop_begin ).count();
           cout << "Analysing event: " << NOE << " (" << duration/1000 << "s per cycle)" << endl;
         } 
@@ -679,6 +758,7 @@ void extraction(){
   reset_signal(MA);
   reset_signal(MWD);
   reset_signal(TMAX);
+  reset_signal(NMO);
   reset_signal(ECAL25);
   /////////////////////////////////////////////////////
   // FETCH RAW CONTENT FROM DATA
@@ -757,6 +837,7 @@ void extraction(){
         MA[ch].is_valid = true;      
         MWD[ch].is_valid = true;      
         TMAX[ch].is_valid = true;  
+        NMO[ch].is_valid = true;  
         // Aditionally for the RAW channels
         RAW[h].is_valid = true;
         if (MAPPING[a][b].multis == 2){
@@ -812,7 +893,7 @@ void extraction(){
       // Convert the board channel to overall channel 
       entry = (board-1)*8 + channel;
       RAW[entry].CFD.trace.clear();
-      RAW[entry].CFD.trace = CFD(RAW[entry].trace);
+      RAW[entry].CFD.trace = CFD(RAW[entry].trace, 1);
     }
   }
 
@@ -826,6 +907,10 @@ void extraction(){
 	  MA[i].trace = MA_filter(RAW_CALIB[i].trace, CALIB.MA_energy[i]);
 	  MWD[i].trace = MWD_filter(RAW_CALIB[i].trace, CALIB.MWD_energy[i]);
 	  TMAX[i].trace = FIR_filter(RAW_CALIB[i].trace, CALIB.TMAX_energy[i]);
+    for (int n = 0; n < (int)TMAX[i].trace.size(); n++){
+      // printf("%3.1f %3.1f %3.1f\n", RAW_CALIB[i].trace[n], TMAX[i].trace[n], CALIB.TMAX_energy[i] );
+    }
+
 	  /////////////////////////////////////////////////////
 	  // APPLICATION OF THE CONSTANT FRACTION DISCRIMINATOR 
 	  /////////////////////////////////////////////////////
@@ -833,11 +918,12 @@ void extraction(){
 	  MA[i].CFD.trace.clear();
 	  MWD[i].CFD.trace.clear();
 	  TMAX[i].CFD.trace.clear();
-	  RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace);
-	  MA[i].CFD.trace = CFD(MA[i].trace);
-	  MWD[i].CFD.trace = CFD(MWD[i].trace);
-	  TMAX[i].CFD.trace = CFD(TMAX[i].trace);
+	  RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace, 1);
+	  MA[i].CFD.trace = CFD(MA[i].trace, 1);
+	  MWD[i].CFD.trace = CFD(MWD[i].trace, 1);
+	  TMAX[i].CFD.trace = CFD(TMAX[i].trace, 1);
 	}
+
   /////////////////////////////////////////////////////
   // CALCULATE BASELINE STATISTICS 
   /////////////////////////////////////////////////////
@@ -848,19 +934,19 @@ void extraction(){
     // otherwise do the calculation
     RAW_CALIB[i].base.mean = array_mean(RAW_CALIB[i].trace, 0,BASELINE_CUT*RAW_CALIB[i].multis);
     RAW_CALIB[i].base.std = array_std(RAW_CALIB[i].trace, 0, BASELINE_CUT*RAW_CALIB[i].multis,RAW_CALIB[i].base.mean);
-    RAW_CALIB[i].base.TH = THRESHOLD_MULTIPLICY * RAW_CALIB[i].base.std; 
+    RAW_CALIB[i].base.TH = RAW_CALIB[i].base.TH_multiplicity * RAW_CALIB[i].base.std; 
     //
     MA[i].base.mean = array_mean(MA[i].trace, 0,BASELINE_CUT*MA[i].multis);
     MA[i].base.std = array_std(MA[i].trace, 0, BASELINE_CUT*MA[i].multis,MA[i].base.mean);
-    MA[i].base.TH = THRESHOLD_MULTIPLICY * MA[i].base.std; 
+    MA[i].base.TH = RAW_CALIB[i].base.TH_multiplicity * MA[i].base.std; 
     //
     MWD[i].base.mean = array_mean(MWD[i].trace, 0,BASELINE_CUT*MWD[i].multis);
     MWD[i].base.std = array_std(MWD[i].trace, 0, BASELINE_CUT*MWD[i].multis,MWD[i].base.mean);
-    MWD[i].base.TH = THRESHOLD_MULTIPLICY * MWD[i].base.std; 
+    MWD[i].base.TH = RAW_CALIB[i].base.TH_multiplicity * MWD[i].base.std; 
     //
     TMAX[i].base.mean = array_mean(TMAX[i].trace, 0,BASELINE_CUT*TMAX[i].multis);
     TMAX[i].base.std = array_std(TMAX[i].trace, 0, BASELINE_CUT*TMAX[i].multis,TMAX[i].base.mean);
-    TMAX[i].base.TH = THRESHOLD_MULTIPLICY * TMAX[i].base.std; 
+    TMAX[i].base.TH = RAW_CALIB[i].base.TH_multiplicity * TMAX[i].base.std; 
   }
   /////////////////////////////////////////////////////
   // EXTRACT FEATURES FROM TRACES
@@ -868,7 +954,7 @@ void extraction(){
   // First the RAW traces
   for(int i=0; i<(int)RAW.size(); i++){
     // Extract the maximum
-  	RAW[i].energy = array_largest(RAW[i].trace, BASELINE_CUT, ENERGY_WINDOW_MAX);
+  	RAW[i].energy = RAW[i].trace[array_largest(RAW[i].trace, BASELINE_CUT, ENERGY_WINDOW_MAX)];
   	// Look for CFD Zero Crossing
   	RAW[i].CFD.Xzero = array_zero_xing(RAW[i].CFD.trace, BASELINE_CUT, ENERGY_WINDOW_MAX);
     // Already fill the samples into a histogram for baseline noise estimation
@@ -881,74 +967,151 @@ void extraction(){
 
   //
   // Then the Filtered traces
+  // 
+  // In beam mode first check if the central crystal is healthy
+  int central_healty = 0;
+  // Left and Right borders for maximum detection
+  int left = BASELINE_CUT * RAW_CALIB[0].multis;
+  int right = ENERGY_WINDOW_MAX * RAW_CALIB[0].multis;
+  // Already extract features of RAW_CALIB
+  if (strcmp(MODE, "BEAM")==0){
+    RAW_CALIB[CENTRAL].energy_n = array_largest(RAW_CALIB[CENTRAL].trace, left, right); // sample number of largest sample
+    RAW_CALIB[CENTRAL].energy = RAW_CALIB[CENTRAL].trace[RAW_CALIB[CENTRAL].energy_n];
+    RAW_CALIB[CENTRAL].integral = signal_integral(RAW_CALIB[CENTRAL], 0);
+    RAW_CALIB[CENTRAL].ratio = RAW_CALIB[CENTRAL].integral / RAW_CALIB[CENTRAL].energy;
+    if ( is_valid_max( RAW_CALIB[CENTRAL], RAW_CALIB[CENTRAL].energy_n ) == 0 ){
+      if ( RAW_CALIB[CENTRAL].ratio < UPPER_RATIO && RAW_CALIB[CENTRAL].ratio > LOWER_RATIO){
+        RAW_CALIB[CENTRAL].is_signal = 1;
+        central_healty = 1;
+      }
+      else central_healty = 0;
+    }
+    else central_healty = 0;
+
+  }
+  else central_healty = 1;
+  // Now loop through all the channels
 	for(int i=0; i<(int)RAW_CALIB.size(); i++){
+    // plot = 1;
+    // Only extract features from valid channels
+    if (RAW_CALIB[i].is_valid == false) continue;
 		// Left and Right borders for maximum detection
 		int left = BASELINE_CUT * RAW_CALIB[i].multis;
 		int right = ENERGY_WINDOW_MAX * RAW_CALIB[i].multis;
 		// Already extract features of RAW_CALIB
-    RAW_CALIB[i].energy_n = array_largest(RAW_CALIB[i].trace, left, right); // sample number of largest sample
+    RAW_CALIB[i].energy_n = array_largest(RAW_CALIB[i].trace, RAW_CALIB[i].multis*BASELINE_CUT, RAW_CALIB[i].multis*ENERGY_WINDOW_MAX); // sample number of largest sample
     RAW_CALIB[i].energy = RAW_CALIB[i].trace[RAW_CALIB[i].energy_n];
     RAW_CALIB[i].integral = signal_integral(RAW_CALIB[i], 0);
     RAW_CALIB[i].ratio = RAW_CALIB[i].integral / RAW_CALIB[i].energy;
-    // Only extract features from valid channels
-    if (RAW_CALIB[i].is_valid == false) continue;
+    // printf("%3.1f %3.1f %d\n", RAW_CALIB[i].energy, RAW_CALIB[i].base.TH, RAW_CALIB[i].energy_n);
+
     // Search for maximum and check if valid
-    if ( is_valid_max( RAW_CALIB[i], RAW_CALIB[i].energy_n ) == 0 ){ // The maximum is valid
-      // Also check for the central crystal, if the ratio is within the cut
-      if ( i == CENTRAL ){
-        if ( RAW_CALIB[i].ratio < 30 && RAW_CALIB[i].ratio > 18){
-          RAW_CALIB[i].is_signal = 1;
-          // Calculate the proto trace for RAW_CALIB[CENTRAL]
-          hfile->cd("/WAVE_FORMS/RAW_CALIB/PROTO_TRACE");
-          // if (NOE%1000 == 0) plot_trace(RAW_CALIB[CENTRAL].proto_trace, "PROTO_TRACE", "BLA");
-          RAW_CALIB[CENTRAL].proto_trace = array_sum(RAW_CALIB[CENTRAL].proto_trace, RAW_CALIB[CENTRAL].trace, 1);
-          // Fill the proto trace hist
-          for (int n = 0; n < (int)RAW_CALIB[CENTRAL].proto_trace.size(); n++){
-            RAW_CALIB[CENTRAL].TH2D_proto_trace.hist->Fill(n, RAW_CALIB[CENTRAL].trace[n]);
-          }
-          // if((NOE%100) == 0){
-          //   if ( RAW_CALIB[i].ratio == 0 ){
-          //     if ( i == 4 ) plot = 1;
-          //   }
-          //   // signal_integral(RAW_CALIB[i], 1);
-          // }
-        }
-        else RAW_CALIB[i].is_signal = 0;
+    if ( is_valid_max( RAW_CALIB[i], RAW_CALIB[i].energy_n ) == 0 && central_healty == 1 ){ // The maximum is valid
+      // Signal is good
+      RAW_CALIB[i].is_signal = 1;
+      // Save the sum of all signals per channel
+      RAW_CALIB[i].proto_trace = array_sum(RAW_CALIB[i].proto_trace, RAW_CALIB[i].trace, 1);
+      // Fill the proto trace hist
+      for (int n = 0; n < (int)RAW_CALIB[i].proto_trace.size(); n++){
+        RAW_CALIB[i].TH2D_proto_trace.hist->Fill(n, RAW_CALIB[i].trace[n]);
       }
-      else RAW_CALIB[i].is_signal = 1; // for non-central xtals
-    	// RAW_CALIB[i].is_signal = 1;  
+      //
     	// Only look for the filter traces if raw trace is not a glitch
-      if (RAW_CALIB[i].is_signal == 1){
-        MA[i].energy_n = array_largest(MA[i].trace, left, right);
-        if ( is_valid_max( MA[i], MA[i].energy_n ) == 0 ){
-          MA[i].energy = MA[i].trace[MA[i].energy_n];
-          MA[i].integral = signal_integral(MA[i], 0);
-          MA[i].ratio = MA[i].integral / MA[i].energy;
-          MA[i].is_signal = 1;
+      MA[i].energy_n = array_largest(MA[i].trace, left, right);
+      if ( is_valid_max( MA[i], MA[i].energy_n ) == 0 ){
+        MA[i].energy = MA[i].trace[MA[i].energy_n];
+        MA[i].integral = signal_integral(MA[i], 0);
+        MA[i].ratio = MA[i].integral / MA[i].energy;
+        MA[i].is_signal = 1;
+      }
+      else{ MA[i].energy = 0; MA[i].integral = 0; MA[i].ratio = 0; MA[i].is_signal = 0;}
+      //
+      MWD[i].energy_n = array_largest(MWD[i].trace, left, right);
+      if ( is_valid_max( MWD[i], MWD[i].energy_n ) == 0 ){
+        MWD[i].energy = MWD[i].trace[MWD[i].energy_n];
+        MWD[i].integral = signal_integral(MWD[i], 0);
+        MWD[i].ratio = MWD[i].integral / MWD[i].energy;
+        MWD[i].is_signal = 1;
+      }
+      else{ MWD[i].energy = 0; MWD[i].integral = 0; MWD[i].ratio = 0; MWD[i].is_signal = 0;}
+      //
+      TMAX[i].energy_n = array_largest(TMAX[i].trace, left, right);
+      if ( is_valid_max( TMAX[i], TMAX[i].energy_n ) == 0 ){
+        TMAX[i].energy = TMAX[i].trace[TMAX[i].energy_n];
+        TMAX[i].integral = signal_integral(TMAX[i], 0);
+        TMAX[i].ratio = TMAX[i].integral / TMAX[i].energy;
+        TMAX[i].is_signal = 1;
+      }
+      else{ TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;}
+      // For the sake of computational efficiency, only do the Nelder-Mead optimization for signal events
+
+      // If the proto traces are already extracted, do the optimization
+      if (EXTRACT_PROTO==0){
+        // Now do optimization for prototraces and RAW_CALIB
+
+
+        vector<double> init; init.push_back(1.0); init.push_back(1.0);
+
+        double a0[]={+1, -1}, a1[]={0.5, -2}, a2[]={ 1.5, 1.0};
+        vector<vector<double> > simplex;
+        simplex.push_back( vector<double>(a0,a0+2) );
+        simplex.push_back( vector<double>(a1,a1+2) );
+        simplex.push_back( vector<double>(a2,a2+2) );
+
+        vector<double> weights;
+
+        for (int n = 0; n < 100; n++){
+          weights.push_back(1);
         }
-        else{ MA[i].energy = 0; MA[i].integral = 0; MA[i].ratio = 0; MA[i].is_signal = 0;}
-        MWD[i].energy_n = array_largest(MWD[i].trace, left, right);
-        if ( is_valid_max( MWD[i], MWD[i].energy_n ) == 0 ){
-          MWD[i].energy = MWD[i].trace[MWD[i].energy_n];
-          MWD[i].integral = signal_integral(MWD[i], 0);
-          MWD[i].ratio = MWD[i].integral / MWD[i].energy;
-          MWD[i].is_signal = 1;
+        for (int n = 100; n < 120; n++){
+          weights.push_back(1);
         }
-        else{ MWD[i].energy = 0; MWD[i].integral = 0; MWD[i].ratio = 0; MWD[i].is_signal = 0;}
-        TMAX[i].energy_n = array_largest(TMAX[i].trace, left, right);
-        if ( is_valid_max( TMAX[i], TMAX[i].energy_n ) == 0 ){
-          TMAX[i].energy = TMAX[i].trace[TMAX[i].energy_n];
-          TMAX[i].integral = signal_integral(TMAX[i], 0);
-          TMAX[i].ratio = TMAX[i].integral / TMAX[i].energy;
-          TMAX[i].is_signal = 1;
+        for (int n = 120; n < (int)RAW_CALIB[i].trace.size(); n++){
+          weights.push_back(1);
         }
-        else{ TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;}
+
+        vector<double> opt;
+        // printf("\n%d %d\n", (int)RAW_CALIB[i].trace.size(), (int)RAW_CALIB[i].proto_trace_fit.size());
+        int debug = 0;
+        // if (i == 6) debug = 2;
+        opt = BT::Simplex(array_compare, 
+                      RAW_CALIB[i].trace,
+                      RAW_CALIB[i].proto_trace_fit,
+                      weights,
+                      50, 250,
+                      init,
+                      (double) 1e-7,
+                      simplex,
+                      1E5,
+                      debug
+        );
+        // printf("++++++++++\n %3.3f %3.3f\n++++++++++", opt[0], opt[1]);
+        // Save optimized wave form in NMO trace
+        
+        NMO[i].trace = array_adjust(RAW_CALIB[i].proto_trace_fit, opt, 0);
+        NMO[i].is_signal = 1;
+        NMO[i].is_valid = true;
+
+        int len1 = (int)NMO[i].trace.size();
+        int len2 = (int)RAW_CALIB[i].trace.size();
+        double frac = (double)len1/(double)len2;
+
+
+        NMO[i].energy_n = array_largest(NMO[i].trace, (int)left*frac, (int)right*frac); // sample number of largest sample
+        NMO[i].energy = NMO[i].trace[NMO[i].energy_n];
+        NMO[i].integral = signal_integral(NMO[i], 0);
+        NMO[i].ratio = NMO[i].integral / NMO[i].energy;
+
+        // if (i == CENTRAL ) plot = 1;
+
+        // plot = 1;
+
       }
       else{
-        RAW_CALIB[i].energy = 0; RAW_CALIB[i].integral = 0;RAW_CALIB[i].ratio = 0; RAW_CALIB[i].is_signal = 0;
-        MA[i].energy = 0; MA[i].integral = 0; MA[i].ratio = 0; MA[i].is_signal = 0;
-        MWD[i].energy = 0; MWD[i].integral = 0; MWD[i].ratio = 0; MWD[i].is_signal = 0;
-        TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;
+        // For the NMO, fill the non-optimized traces with 0
+        for (int n = 0; n < (int)RAW_CALIB[0].trace.size(); n++){
+          NMO[i].trace.push_back(0.0);
+        }
       }
     }
     else { 
@@ -957,16 +1120,32 @@ void extraction(){
     	MA[i].energy = 0; MA[i].integral = 0; MA[i].ratio = 0; MA[i].is_signal = 0;
     	MWD[i].energy = 0; MWD[i].integral = 0; MWD[i].ratio = 0; MWD[i].is_signal = 0;
     	TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;
+      NMO[i].energy = 0; NMO[i].integral = 0; NMO[i].ratio = 0; NMO[i].is_signal = 0;
+      // For the NMO, fill the non-optimized traces with 0
+      for (int n = 0; n < (int)RAW_CALIB[0].trace.size(); n++){
+        NMO[i].trace.push_back(0.0);
+      }
     }
+
+    // Calculate sample_t of NMO which can be different than 
+    double nmo_tracelen = (double)NMO[i].trace.size();
+    NMO[i].sample_t = (double)( SAMPLE_t * (TRACELEN/nmo_tracelen) ); // NMO can have a higher sampling rate, calculate it based on the ADC sampling
+    // printf("%3.2f\n", NMO[i].sample_t);
+
     // Calculate the CFD traces
     RAW_CALIB[i].CFD.trace.clear();
-    RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace);
+    RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace, 1);
     MA[i].CFD.trace.clear();
-    MA[i].CFD.trace = CFD(MA[i].trace);
+    MA[i].CFD.trace = CFD(MA[i].trace, 1);
     MWD[i].CFD.trace.clear();
-    MWD[i].CFD.trace = CFD(MWD[i].trace);
+    MWD[i].CFD.trace = CFD(MWD[i].trace, 1);
     TMAX[i].CFD.trace.clear();
-    TMAX[i].CFD.trace = CFD(TMAX[i].trace);
+    TMAX[i].CFD.trace = CFD(TMAX[i].trace, 1);
+    // Calculate the multiplication adjustment to the higher res NMO trace
+    double multiplier = (double)(NMO[i].trace.size() / RAW_CALIB[i].trace.size());
+    //
+    NMO[i].CFD.trace.clear();
+    NMO[i].CFD.trace = CFD(NMO[i].trace, multiplier);
   
 
     // if ( RAW_CALIB[i].ratio == 0 ){
@@ -978,14 +1157,6 @@ void extraction(){
 
   }
 
-  if (plot == 1){
-    hfile->cd("JUNK/");
-    plot_waves_compare("PLOT1", "TRACE");
-  }
-  if (plot == 2){
-    hfile->cd("JUNK/");
-    plot_waves_compare("PLOT2", "TRACE");
-  }
 
 
   /////////////////////////////////////////////////////
@@ -995,7 +1166,7 @@ void extraction(){
   // + Column cut: only look for coincident events in stacked crystals
 
   // Column cut / cosmics mode:
-  bool is_coinc = true;
+  bool is_coinc = false;
   //
   if(strcmp(MODE, "COSMICS") == 0) {
     // Array for saving column information
@@ -1007,14 +1178,13 @@ void extraction(){
         // Chrystal channel (Channel of matrix)
         int ch = b*(int)MAPPING.size()+a; 
         // Check if there was a signal in channel ch
-        if (RAW_CALIB[ch].is_signal == 1){
+        if (RAW_CALIB[ch].is_signal == 1 && RAW_CALIB[ch].is_valid == 1){
           column++;
         }
       }
       // printf("%d %d\n", column, (int)MAPPING.size() - 1);
       // Now check how many signals per column
       if (column < COINC_LEVEL ){//(int)MAPPING[0].size()-1){
-        is_coinc = false;
         // Throw away events in this column 
         for (int a = 0; a < (int)MAPPING.size(); a++){
           // Chrystal channel (Channel of matrix)
@@ -1023,14 +1193,16 @@ void extraction(){
           MA[ch].energy = 0;
           MWD[ch].energy = 0;
           TMAX[ch].energy = 0;
+          NMO[ch].energy = 0;
           //
           RAW_CALIB[ch].integral = 0;
           MA[ch].integral = 0;
           MWD[ch].integral = 0;
           TMAX[ch].integral = 0;
+          NMO[ch].integral = 0;
         }
       }
-      else { is_coinc = true; }
+      else is_coinc = true;
       // If it's only one crystal per column, set the coincidencec setting still to true
       if ( (int)MAPPING.size() == 1){
         is_coinc = true;
@@ -1051,10 +1223,20 @@ void extraction(){
       }
     }
   } 
+  if (plot == true){
+    printf("PLOTTED\n");
+    hfile->cd("JUNK/");
+    plot_waves_compare("PLOT1", "TRACE");
+  }
+  if (plot == 2){
+    hfile->cd("JUNK/");
+    plot_waves_compare("PLOT2", "TRACE");
+  }
+
   //
   //
-  is_coinc = false;
   if(strcmp(MODE, "BEAM") == 0) {
+    is_coinc = false;
     // If xtal in beam is not valid
     // Read out the tagger statistics
     int tags_per_event = 0;
@@ -1076,7 +1258,7 @@ void extraction(){
         } 
       }
     }
-    // Enter the tagged energy in the right histogram
+    // Enter the tagged energy in the right histogram and do the timing
     for (int k = 0; k < N_E_WINDOW; k ++){
       // If the right tagger channel is found
       for (int i = 0; i < (int)RAW_CALIB.size(); i++){
@@ -1090,32 +1272,38 @@ void extraction(){
           MA[i].tagged[k].energy = MA[i].energy;
           MWD[i].tagged[k].energy = MWD[i].energy;
           TMAX[i].tagged[k].energy = TMAX[i].energy;
+          NMO[i].tagged[k].energy = NMO[i].energy;
           //
           RAW_CALIB[i].tagged[k].integral = RAW_CALIB[i].integral;
           MA[i].tagged[k].integral = MA[i].integral;
           MWD[i].tagged[k].integral = MWD[i].integral;
           TMAX[i].tagged[k].integral = TMAX[i].integral;
+          NMO[i].tagged[k].integral = NMO[i].integral;
           //
           ECAL25[0].tagged[k].energy += RAW_CALIB[i].energy;
           ECAL25[1].tagged[k].energy += MA[i].energy;
           ECAL25[2].tagged[k].energy += MWD[i].energy;
           ECAL25[3].tagged[k].energy += TMAX[i].energy;
+          ECAL25[4].tagged[k].energy += NMO[i].energy;
           //
           ECAL25[0].tagged[k].integral += RAW_CALIB[i].integral;
           ECAL25[1].tagged[k].integral += MA[i].integral;
           ECAL25[2].tagged[k].integral += MWD[i].integral;
           ECAL25[3].tagged[k].integral += TMAX[i].integral;
+          ECAL25[4].tagged[k].integral += NMO[i].integral;
         }
         else{
           RAW_CALIB[i].tagged[k].energy = 0.0;
           MA[i].tagged[k].energy = 0.0;
           MWD[i].tagged[k].energy = 0.0;
           TMAX[i].tagged[k].energy = 0.0;
+          NMO[i].tagged[k].energy = 0.0;
           //
           RAW_CALIB[i].tagged[k].integral = 0.0;
           MA[i].tagged[k].integral = 0.0;
           MWD[i].tagged[k].integral = 0.0;
           TMAX[i].tagged[k].integral = 0.0;
+          NMO[i].tagged[k].integral = 0.0;
         }
         // Fill energies only if no multiples are detected
         if ( RAW_CALIB[i].is_signal == true && // If signal is valid
@@ -1126,21 +1314,25 @@ void extraction(){
           MA[i].tagged[k].energy_m = MA[i].energy;
           MWD[i].tagged[k].energy_m = MWD[i].energy;
           TMAX[i].tagged[k].energy_m = TMAX[i].energy;
+          NMO[i].tagged[k].energy_m = NMO[i].energy;
           //
           RAW_CALIB[i].tagged[k].integral_m = RAW_CALIB[i].integral;
           MA[i].tagged[k].integral_m = MA[i].integral;
           MWD[i].tagged[k].integral_m = MWD[i].integral;
           TMAX[i].tagged[k].integral_m = TMAX[i].integral;
+          NMO[i].tagged[k].integral_m = NMO[i].integral;
           //
           ECAL25[0].tagged[k].energy_m += RAW_CALIB[i].tagged[k].energy_m;
           ECAL25[1].tagged[k].energy_m += MA[i].tagged[k].energy_m;
           ECAL25[2].tagged[k].energy_m += MWD[i].tagged[k].energy_m;
           ECAL25[3].tagged[k].energy_m += TMAX[i].tagged[k].energy_m;
+          ECAL25[4].tagged[k].energy_m += NMO[i].tagged[k].energy_m;
           //
           ECAL25[0].tagged[k].integral_m += RAW_CALIB[i].tagged[k].integral_m;
           ECAL25[1].tagged[k].integral_m += MA[i].tagged[k].integral_m;
           ECAL25[2].tagged[k].integral_m += MWD[i].tagged[k].integral_m;
           ECAL25[3].tagged[k].integral_m += TMAX[i].tagged[k].integral_m;
+          ECAL25[4].tagged[k].integral_m += NMO[i].tagged[k].integral_m;
 
         }
         else{
@@ -1148,38 +1340,44 @@ void extraction(){
           MA[i].tagged[k].energy_m = 0.0;
           MWD[i].tagged[k].energy_m = 0.0;
           TMAX[i].tagged[k].energy_m = 0.0;
+          NMO[i].tagged[k].energy_m = 0.0;
           //
           RAW_CALIB[i].tagged[k].integral_m = 0.0;
           MA[i].tagged[k].integral_m = 0.0;
           MWD[i].tagged[k].integral_m = 0.0;
           TMAX[i].tagged[k].integral_m = 0.0;
+          NMO[i].tagged[k].integral_m = 0.0;
         }
         // Fill energies for constrained timing window and without multiples
         if ( RAW_CALIB[i].is_signal == true && // If signal is valid
              TAGGER.time[k] != 0 && // and if tagger is set for energy k
              tags_per_event == 1 && // and if only one tagged energy per tag
-             TAGGER.time[k] > (TAGGER.cut[k] - TAGGER_WINDOW) &&
-             TAGGER.time[k] < (TAGGER.cut[k] + TAGGER_WINDOW) // and if tagger time is in the timing window cut
+             TAGGER.time[k] >= (TAGGER.cut[k] - TAGGER_WINDOW) &&
+             TAGGER.time[k] <= (TAGGER.cut[k] + TAGGER_WINDOW) // and if tagger time is in the timing window cut
               ){ 
           RAW_CALIB[i].tagged[k].energy_mt = RAW_CALIB[i].energy;
           MA[i].tagged[k].energy_mt = MA[i].energy;
           MWD[i].tagged[k].energy_mt = MWD[i].energy;
           TMAX[i].tagged[k].energy_mt = TMAX[i].energy;
+          NMO[i].tagged[k].energy_mt = NMO[i].energy;
           //
           RAW_CALIB[i].tagged[k].integral_mt = RAW_CALIB[i].integral;
           MA[i].tagged[k].integral_mt = MA[i].integral;
           MWD[i].tagged[k].integral_mt = MWD[i].integral;
           TMAX[i].tagged[k].integral_mt = TMAX[i].integral;
+          NMO[i].tagged[k].integral_mt = NMO[i].integral;
           //
           ECAL25[0].tagged[k].energy_mt += RAW_CALIB[i].tagged[k].energy_mt;
           ECAL25[1].tagged[k].energy_mt += MA[i].tagged[k].energy_mt;
           ECAL25[2].tagged[k].energy_mt += MWD[i].tagged[k].energy_mt;
           ECAL25[3].tagged[k].energy_mt += TMAX[i].tagged[k].energy_mt;
+          ECAL25[4].tagged[k].energy_mt += NMO[i].tagged[k].energy_mt;
           //
           ECAL25[0].tagged[k].integral_mt += RAW_CALIB[i].tagged[k].integral_mt;
           ECAL25[1].tagged[k].integral_mt += MA[i].tagged[k].integral_mt;
           ECAL25[2].tagged[k].integral_mt += MWD[i].tagged[k].integral_mt;
           ECAL25[3].tagged[k].integral_mt += TMAX[i].tagged[k].integral_mt;
+          ECAL25[4].tagged[k].integral_mt += NMO[i].tagged[k].integral_mt;
 
           // if  (k == 0 && 
           //     (NOE % 10) == 0 &&
@@ -1200,11 +1398,13 @@ void extraction(){
           MA[i].tagged[k].energy_mt = 0.0;
           MWD[i].tagged[k].energy_mt = 0.0;
           TMAX[i].tagged[k].energy_mt = 0.0;
+          NMO[i].tagged[k].energy_mt = 0.0;
           //
           RAW_CALIB[i].tagged[k].integral_mt = 0.0;
           MA[i].tagged[k].integral_mt = 0.0;
           MWD[i].tagged[k].integral_mt = 0.0;
           TMAX[i].tagged[k].integral_mt = 0.0;
+          NMO[i].tagged[k].integral_mt = 0.0;
         }
       }
     }
@@ -1238,6 +1438,10 @@ void extraction(){
           ECAL25[3].energy += TMAX[i].energy; 
           ECAL25[3].integral += TMAX[i].integral; 
         }
+        if (NMO[i].is_signal == 1){
+          ECAL25[4].energy += NMO[i].energy; 
+          ECAL25[4].integral += NMO[i].integral; 
+        }
       }
     }
     // If central crystal does not have a valid event, don't sum up
@@ -1257,8 +1461,25 @@ void extraction(){
         }
       }
     }
-
-
+    // Now enter the the sum energy of the ECAL into the tagger time vs ecal energy 2D histogram
+    // Only if tagger cut and multiplicity is obeyed
+    tags_per_event = 0;
+    int tagger_channel = 0;
+    for (int k = 0; k < N_E_WINDOW; k++){
+      if ( 
+        TAGGER.time[k] != 0 && // and if tagger is set for energy k
+        TAGGER.time[k] >= (TAGGER.cut[k] - TAGGER_WINDOW) &&
+        TAGGER.time[k] <= (TAGGER.cut[k] + TAGGER_WINDOW) // and if tagger time is in the timing window cut
+      ){ 
+        // Check if only one tagger channel fired
+        tagger_channel = TAGGER.time[k];
+        tags_per_event++;
+      }
+    }
+    // Only fill if only one tag per event
+    if ( tags_per_event == 1){
+      if (ECAL25[4].energy != 0) TAGGER.h_tagger_vs_energy.hist->Fill( ECAL25[4].energy, tagger_channel);
+    }
 
   } 
   // Now print wave forms
@@ -1266,7 +1487,7 @@ void extraction(){
   if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true) || // either Cosmics mode or
       (strcmp(MODE, "BEAM") == 0 && is_coinc == true) || // Beam mode or
       (strcmp(MODE, "PULSER") == 0) ) { // Pulser mode
-    if(NOE%10000==0){
+    if(NOE%1000==0){
       hfile->cd("WAVE_FORMS/");
       plot_waves_compare("FILTER_COMPARE", "TRACE");
       hfile->cd("WAVE_FORMS/RAW_CALIB");
@@ -1280,6 +1501,9 @@ void extraction(){
       // Set printing folder to MA coincident waves
       hfile->cd("WAVE_FORMS/TMAX");
       plot_waves(TMAX, "SIGNAL_TMAX", "TRACE");
+      // Set printing folder to MA coincident waves
+      hfile->cd("WAVE_FORMS/NMO");
+      plot_waves(NMO, "SIGNAL_NMO", "TRACE");
       // Set printing folder to CFD 
       hfile->cd("WAVE_FORMS/CFD/RAW_CALIB");
       plot_waves(RAW_CALIB, "CFD_RAW_CALIB", "CFD");
@@ -1287,8 +1511,11 @@ void extraction(){
       plot_waves(MA, "CFD_MA", "CFD");
       hfile->cd("WAVE_FORMS/CFD/MWD");
       plot_waves(MWD, "CFD_MWD", "CFD");
-      hfile->cd("WAVE_FORMS/CFD/MWD");
+      hfile->cd("WAVE_FORMS/CFD/TMAX");
       plot_waves(TMAX, "CFD_TMAX", "CFD");
+      hfile->cd("WAVE_FORMS/CFD/NMO");
+      plot_waves(NMO, "CFD_NMO", "CFD");
+
       // if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true ) && ((int)MAPPING.size() > 1) ){
       //   // The interpolation
       //   hfile->cd("WAVE_FORMS/CFD/MA/INTERPOL");
@@ -1614,6 +1841,7 @@ void print_final_statistics(){
       MA[i].h_energy.params = fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "langaus");
       MWD[i].h_energy.params = fit_hist(MWD[i].h_energy.hist, MWD[i].h_energy.fit, "langaus");
       TMAX[i].h_energy.params = fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "langaus");
+      NMO[i].h_energy.params = fit_hist(NMO[i].h_energy.hist, NMO[i].h_energy.fit, "langaus");
       // Fill the calibration parameters into the histogram
       CALIB.h_RAW_energy.hist->Fill((ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i]);
       // Some runtime information
@@ -1628,6 +1856,7 @@ void print_final_statistics(){
       print_energy_statistics(MA, "MA");
       print_energy_statistics(MWD, "MWD");
       print_energy_statistics(TMAX, "TMAX");
+      print_energy_statistics(NMO, "NMO");
       // Resulting calibration parameters
       print_energy_calib();
     }
@@ -1675,6 +1904,7 @@ void print_final_statistics(){
       fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "multigaus");  
       fit_hist(MWD[i].h_energy.hist, MWD[i].h_energy.fit, "multigaus");  
       fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "multigaus");  
+      fit_hist(NMO[i].h_energy.hist, NMO[i].h_energy.fit, "multigaus");  
     }
   }
 
@@ -1721,56 +1951,103 @@ void print_final_statistics(){
     plot_tagger_hist(MA, "ENERGY/TAGGER/PULSE_HIGHT/MA", "pulseheight");
     plot_tagger_hist(MWD, "ENERGY/TAGGER/PULSE_HIGHT/MWD", "pulseheight");
     plot_tagger_hist(TMAX, "ENERGY/TAGGER/PULSE_HIGHT/TMAX", "pulseheight");
+    plot_tagger_hist(NMO, "ENERGY/TAGGER/PULSE_HIGHT/NMO", "pulseheight");
     // Print the split screen tagger energy histograms
     plot_tagger_hist(RAW_CALIB, "ENERGY/TAGGER/INTEGRAL/RAW_CALIB", "integral");
     plot_tagger_hist(MA, "ENERGY/TAGGER/INTEGRAL/MA", "integral");
     plot_tagger_hist(MWD, "ENERGY/TAGGER/INTEGRAL/MWD", "integral");
     plot_tagger_hist(TMAX, "ENERGY/TAGGER/INTEGRAL/TMAX", "integral");
-    // Print the proto trace histogram
-    plot_TH2D_hist(RAW_CALIB[CENTRAL].TH2D_proto_trace.hist, "WAVE_FORMS/RAW_CALIB/PROTO_TRACE", "PLOT");
-
-
+    plot_tagger_hist(NMO, "ENERGY/TAGGER/INTEGRAL/NMO", "integral");
 
     // Extract TRACELEN 1D hists out of the 2D hist
-    hfile->cd("JUNK");
     char name[100];
-    double largest = 0;
-    int min = 0;
-    int max = 0;
-    int nbins = 0;
-    for (int n = 1; n <= (int)RAW_CALIB[CENTRAL].trace.size(); n++){
-      sprintf(name, "SLICE%2d", n);
-      RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist = RAW_CALIB[CENTRAL].TH2D_proto_trace.hist->ProjectionY(name, n,n);
-      // RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist->Rebin(10);
-      // Search for the largest bin
-      largest = largest_1Dbin( RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist, -5000, 10000);
-      // Recalculate bin to normal grid
-      min = RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist->GetXaxis()->GetXmin();
-      max = RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist->GetXaxis()->GetXmax();
-      nbins = RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist->GetSize()-2;
-      largest = min + ((max+abs(min))/nbins * largest);
-      RAW_CALIB[CENTRAL].proto_trace_maxbin.push_back(largest);
-      // Fit gauss aroundthe largest value
-      if ( 110 < n && n < 130) RAW_CALIB[CENTRAL].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist, RAW_CALIB[CENTRAL].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+300,0);
-      else RAW_CALIB[CENTRAL].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[CENTRAL].TH1D_proto_trace[n].hist, RAW_CALIB[CENTRAL].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+100,0);
-      printf("%3.1f %3.1f\n", largest, RAW_CALIB[CENTRAL].TH1D_proto_trace[n].params[2]);
-      RAW_CALIB[CENTRAL].proto_trace_fit.push_back(RAW_CALIB[CENTRAL].TH1D_proto_trace[n].params[2]);
+    if (EXTRACT_PROTO == 1){
+      for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+        sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+        hfile->cd(name);
+        double largest = 0;
+        int min = 0;
+        int max = 0;
+        int nbins = 0;
+        for (int n = 1; n <= (int)RAW_CALIB[i].trace.size(); n++){
+          sprintf(name, "SLICE%2d", n);
+          RAW_CALIB[i].TH1D_proto_trace[n].hist = RAW_CALIB[i].TH2D_proto_trace.hist->ProjectionY(name, n,n);
+          RAW_CALIB[i].TH1D_proto_trace[n].hist->Rebin(10);
+          // Search for the largest bin
+          largest = largest_1Dbin( RAW_CALIB[i].TH1D_proto_trace[n].hist, -5000, 10000);
+          // Recalculate bin to normal grid
+          min = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetXaxis()->GetXmin();
+          max = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetXaxis()->GetXmax();
+          nbins = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetSize()-2;
+          largest = min + ((max+abs(min))/nbins * largest);
+          RAW_CALIB[i].proto_trace_maxbin.push_back(largest);
+          // Fit gauss aroundthe largest value
+          if ( 110 < n && n < 130) RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+300,0);
+          else RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+100,0);
+          RAW_CALIB[i].proto_trace_fit.push_back(RAW_CALIB[i].TH1D_proto_trace[n].params[2]);
+        }
+        plot_trace(RAW_CALIB[i].proto_trace, "PROTO_TRACE", "AL*");
+        plot_trace(RAW_CALIB[i].proto_trace_maxbin, "PROTO_TRACE_MAXBIN", "AL*");
+        plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
+
+        sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+        plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_maxbin, name, "PROTO_TRACE_2D_MAXBIN");
+        plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_fit, name, "PROTO_TRACE_2D_FIT");
+        // adjust trace for baseline offset
+        double mean = array_mean(RAW_CALIB[i].proto_trace_fit, 0, BASELINE_CUT);
+        for (int n = 0; n < (int)RAW_CALIB[i].proto_trace_fit.size(); n++ ){
+          RAW_CALIB[i].proto_trace_fit[n] -= mean;  
+        }
+        plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT_ADJUSTED", "AL*");
+      }
+      // Extract proto trace to text file for later reading 
+      if (proto_out->is_open()){
+        for (int n = 0; n < (int)RAW_CALIB[0].proto_trace_fit.size(); n++){
+          for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+            *proto_out << RAW_CALIB[i].proto_trace_fit[n] << ";"; 
+          }
+          *proto_out << endl;
+        }
+        proto_out->close();
+      }
+      else printf("WARNING(statistics): Unable to write proto trace file.\n");
+
     }
-    plot_trace(RAW_CALIB[CENTRAL].proto_trace, "PROTO_TRACE", "BLA");
-    plot_trace(RAW_CALIB[CENTRAL].proto_trace_maxbin, "PROTO_TRACE_MAXBIN", "BLA");
-    plot_trace(RAW_CALIB[CENTRAL].proto_trace_fit, "PROTO_TRACE_FIT", "BLA");
+    if (EXTRACT_PROTO == 0){
+      for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+        RAW_CALIB[i].proto_trace_fit = PROTO[i].proto_trace_fit;
+        plot_trace(PROTO[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
+        sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+        plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, PROTO[i].proto_trace_fit,name, "PROTO_TRACE_2D_FIT");
+      }
+    }
+    /// Fit for the energy sum
+    /// 
+/*    for (int i = 0; i < (int)ECAL25.size(); i++){
+      for (int k = 0; k < N_E_WINDOW; k++){
+        if (k<3) ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+        if (k>=3) ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
 
-    plot_TH2D_hist_graph(RAW_CALIB[CENTRAL].TH2D_proto_trace.hist, RAW_CALIB[CENTRAL].proto_trace_maxbin,"JUNK", "PROTO_TRACE_2D_MAXBIN");
-    plot_TH2D_hist_graph(RAW_CALIB[CENTRAL].TH2D_proto_trace.hist, RAW_CALIB[CENTRAL].proto_trace_fit,"JUNK", "PROTO_TRACE_2D_FIT");
-
-    vector<double> dummy;
-    printf("%3.3f\n", array_compare(RAW_CALIB[CENTRAL].proto_trace_maxbin, RAW_CALIB[CENTRAL].proto_trace_fit, dummy, 0, 300, 1));
-    vector<double> x;
-    x.push_back(10.0);
-    x.push_back(-50.0);
-    vector<double> shifted = array_adjust(RAW_CALIB[CENTRAL].proto_trace_fit, x, 0);
-    plot_trace( shifted, "Shifted_Trace", "Shifted_Trace");
-
+        if (k<3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 5000,  0); 
+        if (k==3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 1000, 8000,  0); 
+        if (k==4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 1000, 8000,  0); 
+        if (k>4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 80000,  0); 
+      }
+    }
+    // Plot the tagger time versus ECAL energy 
+    plot_TH2D_hist(TAGGER.h_tagger_vs_energy.hist, "JUNK", "Tagger_time_vs_energy");
+    // Plot ECAL energy vs tagger energy
+    plot_energy_vs_tagged(ECAL25[3], "JUNK", "energy_vs_tagged");
+    // Plot ECAL energy resolution
+    plot_energy_resolution(ECAL25[3], "JUNK", "energy_resolution");
+*/    // Plot bar chart for the tagger counting frequency
+    vector<double> tagger_frequencies;
+    for (int k = 0; k<16; k++){
+      tagger_frequencies.push_back( TAGGER.counts[k] );
+      printf("%d\n", TAGGER.counts[k]);
+    }
+    hfile->cd("ENERGY/TAGGER/");
+    plot_trace(tagger_frequencies, "Tagger Frequency", "AB");
   }
 
   //
@@ -1783,12 +2060,14 @@ void print_final_statistics(){
   plot_energy_hist(MA, "ENERGY/PULSE_HIGHT/MA", "pulseheight");
   plot_energy_hist(MWD, "ENERGY/PULSE_HIGHT/MWD", "pulseheight");
   plot_energy_hist(TMAX, "ENERGY/PULSE_HIGHT/TMAX", "pulseheight");
+  plot_energy_hist(NMO, "ENERGY/PULSE_HIGHT/NMO", "pulseheight");
   //
   // plot_energy_hist(RAW, "ENERGY/INTEGRAL/RAW", "integral");
   plot_energy_hist(RAW_CALIB, "ENERGY/INTEGRAL/RAW_CALIB", "integral");
   plot_energy_hist(MA, "ENERGY/INTEGRAL/MA", "integral");
   plot_energy_hist(MWD, "ENERGY/INTEGRAL/MWD", "integral");
   plot_energy_hist(TMAX, "ENERGY/INTEGRAL/TMAX", "integral");
+  plot_energy_hist(NMO, "ENERGY/INTEGRAL/NMO", "integral");
   
   printf("+ END OF STATISTICS +\n");
 
@@ -1822,12 +2101,13 @@ void print_energy_calib(){
     }
     else {
       if (i == 0) printf("+ Absolut calibration parameters\n");
-      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f\n", 
+      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
       i,
       (ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i],
       (ENERGY_NORM/MA[i].h_energy.params[8])*(CALIB.MA_energy[i]*CALIB.RAW_energy[i]),
       (ENERGY_NORM/MWD[i].h_energy.params[8])*CALIB.MWD_energy[i]*CALIB.RAW_energy[i],
-      (ENERGY_NORM/TMAX[i].h_energy.params[8]*CALIB.TMAX_energy[i]*CALIB.RAW_energy[i])
+      (ENERGY_NORM/TMAX[i].h_energy.params[8]*CALIB.TMAX_energy[i]*CALIB.RAW_energy[i]),
+      (ENERGY_NORM/NMO[i].h_energy.params[8]*CALIB.NMO_energy[i]*CALIB.RAW_energy[i])
       );
     }
   }
@@ -1838,12 +2118,13 @@ void print_energy_calib(){
     }
     else{
       if (i == 0) printf("+ Relative calibration parameters\n");
-      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f\n", 
+      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
       i,
       (ENERGY_NORM/RAW_CALIB[i].h_energy.params[8]),
       (ENERGY_NORM/MA[i].h_energy.params[8]),
       (ENERGY_NORM/MWD[i].h_energy.params[8]),
-      (ENERGY_NORM/TMAX[i].h_energy.params[8])
+      (ENERGY_NORM/TMAX[i].h_energy.params[8]),
+      (ENERGY_NORM/NMO[i].h_energy.params[8])
       );
     }
   }
@@ -1854,12 +2135,13 @@ void print_energy_calib(){
     }
     else{
       if (i == 0) printf("+ Multiplication calibration factors\n");
-      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f\n", 
+      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
       i,
       CALIB.RAW_energy[i],
       CALIB.MA_energy[i],
       CALIB.MWD_energy[i],
-      CALIB.TMAX_energy[i]
+      CALIB.TMAX_energy[i],
+      CALIB.NMO_energy[i]
       );
     }
   }
@@ -2035,12 +2317,15 @@ void plot_waves_compare(char const *name, char const *modus) {
     TLegend* legend = new TLegend(0.7,0.7,0.9,0.9);
     legend->SetHeader("ADC Digitization"); // option "C" allows to center the header
     // Create different graphs
-    TGraph *tg_combined[4]; // For the 4 Filter types 
+    TGraph *tg_combined[5]; // For the 4 Filter types 
     // If valid, paint
     if (strcmp(modus, "TRACE") == 0){
       // Container for passing to the Root TGraph because vectors don't work
       Double_t wave_y[4][tracelen];
       Double_t wave_x[4][tracelen];
+      Double_t wave_y_long[(int)NMO[i].trace.size()];
+      Double_t wave_x_long[(int)NMO[i].trace.size()];
+      //
       for(Int_t n = 0; n < tracelen; n++){
         wave_y[0][n] = RAW_CALIB[i].trace[n]; 
         wave_x[0][n] = n * RAW_CALIB[i].sample_t; // Calibrate to the sampling rate
@@ -2051,13 +2336,24 @@ void plot_waves_compare(char const *name, char const *modus) {
         wave_y[3][n] = TMAX[i].trace[n]; 
         wave_x[3][n] = n * TMAX[i].sample_t; // Calibrate to the sampling rate
       }
+      for(Int_t n = 0; n < (int)NMO[i].trace.size(); n++){
+        wave_y_long[n] = NMO[i].trace[n]; 
+        wave_x_long[n] = n * NMO[i].sample_t; // Calibrate to the sampling rate
+        // printf("%3.2f %3.2f %3.2f\n", wave_x_long[n], wave_y_long[n], NMO[i].sample_t );
+      }
+
       for (int j = 0; j < 4; j++){
+        if ( j == 1 || j == 2) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
+      tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
     }
     else if (strcmp(modus, "CFD") == 0){
-      Double_t wave_y[4][RAW_CALIB[i].CFD.trace.size()];
-      Double_t wave_x[4][RAW_CALIB[i].CFD.trace.size()];
+      Double_t wave_y[4][tracelen];
+      Double_t wave_x[4][tracelen];
+      Double_t wave_y_long[(int)NMO[i].trace.size()];
+      Double_t wave_x_long[(int)NMO[i].trace.size()];
+      //
       for(Int_t n = 0; n< (Int_t) RAW_CALIB[i].CFD.trace.size(); n++){
         wave_y[0][n] = RAW_CALIB[i].CFD.trace[n];
         wave_x[0][n] = n * RAW_CALIB[i].sample_t; // Calibrate to the sampling rate
@@ -2068,16 +2364,26 @@ void plot_waves_compare(char const *name, char const *modus) {
         wave_y[3][n] = TMAX[i].CFD.trace[n];
         wave_x[3][n] = n * TMAX[i].sample_t; // Calibrate to the sampling rate
       }
+      for(Int_t n = 0; n < (int)NMO[i].trace.size(); n++){
+        wave_y_long[n] = NMO[i].CFD.trace[n];
+        wave_x_long[n] = n * NMO[i].sample_t; // Calibrate to the sampling rate
+      }
+
       for (int j = 0; j < 4; j++){
-      	if ( j == 1 || j == 2) continue; // dont print MA, MWD
+        if ( j == 1 || j == 2) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
+      tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
     } 
     else{ printf("ERROR (plot_waves): Plot option invalid\n");}
-    for (int j = 0; j < 4; j++){
+    int color = 0;
+    for (int j = 0; j < 5; j++){
     	if (j == 1 || j == 2) continue;
-      tg_combined[j]->SetLineColor(j+1);
-      tg_combined[j]->SetMarkerColor(j+1);
+      if (j==0) color = 1;
+      if (j==3) color = 4;
+      if (j==4) color = 2;
+      tg_combined[j]->SetLineColor(color);
+      tg_combined[j]->SetMarkerColor(color);
       tg_combined[j]->SetMarkerSize(0.35);
       tg_combined[j]->SetLineWidth(2);
       char text[100];
@@ -2260,14 +2566,14 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path, const char
     gStyle->SetOptFit(1111);
     gStyle->SetLabelSize(0.05,"X");
     if (strcmp(mode,"pulseheight")==0){
-      array[i].h_energy.hist->Rebin(20);
+      array[i].h_energy.hist->Rebin(1);
       array[i].h_energy.hist->SetFillColor(kBlue-7);
       array[i].h_energy.hist->SetFillStyle(4050);
       array[i].h_energy.hist->GetXaxis()->SetNdivisions(5);
       array[i].h_energy.hist->Draw();
     }
     if (strcmp(mode,"integral")==0){
-      array[i].h_integral.hist->Rebin(20);
+      array[i].h_integral.hist->Rebin(1);
       array[i].h_integral.hist->SetFillColor(kBlue-7);
       array[i].h_integral.hist->SetFillStyle(4050);
       array[i].h_integral.hist->GetXaxis()->SetNdivisions(5);
@@ -2329,6 +2635,148 @@ void plot_TH2D_hist_graph(TH2D *hist, vector<double> trace, char const *path, co
 }
 
 
+void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *name){
+  // GENERAL Energy Histograms
+  hfile->cd(path);
+  TCanvas *cs = new TCanvas("cs","cs",10,10,1280,1024);
+  // Check if array is a RAW trace
+  gPad->SetGridx();
+  gPad->SetGridy();
+  gStyle->SetOptFit(1111);
+  gStyle->SetLabelSize(0.05,"X");
+  // Now the graph part
+  TGraphErrors *graph;
+  TGraph *graph2;
+  Double_t wave_y[(int)signal.tagged.size()];
+  Double_t wave_y_err[(int)signal.tagged.size()];
+  Double_t wave_x[(int)signal.tagged.size()];
+
+  for(Int_t n = 0; n < (int)signal.tagged.size(); n++){
+    wave_y[n] = signal.tagged[n].h_energy_mt.params[2] / 100; //  Norm to MeV 
+    wave_y_err[n] = signal.tagged[n].h_energy_mt.params[4] /100 ; // Norm to MeV
+    wave_x[n] = TAGGER.energy[n]; // Tagger energies
+  }
+
+  graph = new TGraphErrors((int)signal.tagged.size(),wave_x,wave_y,0,wave_y_err);
+
+  graph->RemovePoint(5);
+  
+  graph->SetLineColor(kBlack);
+  // graph->SetMarkerColor(i+1);
+  graph->SetMarkerColor(kBlack);
+  graph->SetMarkerStyle(24);
+  graph->SetMarkerSize(2);
+  graph->SetLineWidth(2);
+  graph->GetXaxis()->SetTitle("Tagger Energy [MeV]");
+  graph->GetYaxis()->SetTitle("Detector Energy [MeV]");
+
+  graph->Draw("ap");
+
+  Double_t wave_y2[800];
+  Double_t wave_x2[800];
+
+  for(Int_t n = 0; n < 800; n++){
+    wave_y2[n] = n;
+    wave_x2[n] = n;
+  }
+
+  graph2 = new TGraph(800,wave_x2,wave_y2);
+
+  graph2->SetMarkerColor(kGray+2);
+  graph2->SetMarkerStyle(31);
+  graph2->SetMarkerSize(0.35);
+  graph2->SetLineWidth(2);
+  graph2->SetLineStyle(9);
+
+  graph2->Draw("SAME");
+
+  vector<Double_t> fit_params;
+
+  fit_params = fit_graph_err(graph, "SIPMpixel", 0, 500, 0);
+
+
+  // printf("+++++++++ FIT +++++++++++\n");
+  // for (int i = 0; i < (int)fit_params.size(); i++){
+  //   printf("%3.3f\n", fit_params[i]);
+  // }
+
+
+
+  cs->Write(name); 
+  delete cs;
+}
+
+// Energy resolution
+void plot_energy_resolution(signal_struct &signal, char const *path, const char *name){
+  // GENERAL Energy Histograms
+  hfile->cd(path);
+  TCanvas *cs = new TCanvas("cs","cs",10,10,1280,1024);
+  // Check if array is a RAW trace
+  gPad->SetGridx();
+  gPad->SetGridy();
+  gStyle->SetOptFit(1111);
+  gStyle->SetLabelSize(0.05,"X");
+  // Now the graph part
+  TGraphErrors *graph;
+  Double_t wave_y[(int)signal.tagged.size()];
+  Double_t wave_y_err[(int)signal.tagged.size()];
+  Double_t wave_x[(int)signal.tagged.size()];
+
+  for(Int_t n = 0; n < (int)signal.tagged.size(); n++){
+    // From gaus fit:
+    // Field 0,1: amp, amp_err
+    // Field 2,3: mean, mean_err
+    // Field 4,5: std, std_err 
+    wave_y[n] = signal.tagged[n].h_energy_mt.params[4] / (TAGGER.energy[n]*100) *100; //  Norm to MeV and to percent
+    wave_y_err[n] = signal.tagged[n].h_energy_mt.params[5] / (TAGGER.energy[n]*100 ) *100 ; // Norm to MeV and to percent
+    wave_x[n] = TAGGER.energy[n]; // Tagger energies
+  }
+
+  graph = new TGraphErrors((int)signal.tagged.size(),wave_x,wave_y,0,wave_y_err);
+
+  graph->RemovePoint(5); // Tagger energy does not exist
+  graph->SetName("data_graph");
+  
+  graph->SetLineColor(kBlack);
+  graph->SetTitle("Data");
+  // graph->SetMarkerColor(i+1);
+  graph->SetMarkerColor(kBlue);
+  graph->SetMarkerStyle(23);
+  graph->SetMarkerSize(4);
+  graph->SetLineWidth(2);
+  graph->GetXaxis()->SetTitle("Tagger Energy [MeV]");
+  graph->GetYaxis()->SetTitle("\\frac{\\sigma}{E} \\left[\\%\\right]");
+
+  gROOT->SetStyle("Plain");
+  gStyle->SetOptFit(1111);
+
+
+
+  graph->Draw("ap");
+
+  vector<Double_t> fit_params;
+
+  fit_params = fit_graph_err(graph, "resolution", 10, 300, 0);
+
+  graph->GetFunction("resolution")->SetLineColor(kRed);
+  graph->GetFunction("resolution")->SetLineWidth(4);
+
+  cs->BuildLegend(0.15, 0.7, 0.4, 0.9,"");
+
+  // TPaveStats st = ((TPaveStats)(graph->GetListOfFunctions()->FindObject("resolution")));
+  // if (st) {
+  //   st->SetTextColor(graph->GetLineColor());
+  //   st->SetX1NDC(0.64); st->SetX2NDC(0.99);
+  //   st->SetY1NDC(0.4); st->SetY2NDC(0.6);
+  // }
+
+  cs->Modified(); cs->Update(); // make sure it’s really (re)drawn
+
+  cs->Write(name); 
+  delete cs;
+}
+
+
 void plot_tagger_hist(vector<signal_struct> &array, char const *path, const char *mode){
   // GENERAL Energy Histograms
   int ch;
@@ -2349,6 +2797,7 @@ void plot_tagger_hist(vector<signal_struct> &array, char const *path, const char
       else {ch = (i / (int)MAPPING.size()) + (i%(int)MAPPING.size())*(int)MAPPING[0].size(); }
       // Choose the right field for the canvas
       cs->cd(ch+1);
+
       gPad->SetGridx();
       gPad->SetGridy();
       if (strcmp(mode,"pulseheight")==0){
@@ -2394,6 +2843,8 @@ void plot_tagger_hist(vector<signal_struct> &array, char const *path, const char
     delete cs;
   }
 }
+
+
 
 
 
@@ -2462,8 +2913,10 @@ void plot_trace(vector<double> &trace, char const *name, char const *modus) {
   graph->SetMarkerSize(0.35);
   graph->SetLineWidth(2);
 
-  graph->Draw("AL*");
-  
+  if (is_in_string(modus, "B")) graph->SetFillColor(38);
+
+  graph->Draw(modus);
+
   canvas->Write(name);
   // delete legend;
   // delete[] tg_combined;
@@ -2548,15 +3001,20 @@ int array_zero_xing(vector<double> &array, int lower, int upper){
 }
 
 // Returns the sum of the weighted differences of each element of array1 and array2 between index start and index end
-double array_compare(vector<double> &array1, vector<double> &array2, vector<double> &weigths, int start, int end, int debug){
+double array_compare(vector<double> &array1, vector<double> &array2, vector<double> &weigths, vector<double> &par, int start, int end, int debug){
   // Some debug output
+  debug=0;
   if (debug == 1){
     printf("DEBUG(array_compare): %d %d %d\n", (int)array1.size(), (int)array2.size(), (int)weigths.size());
   }
+  // Conversion factor to compare two non equal arrays (who have the same time frame)
+  double conversion = 1.;
+  double size1 = (double)array1.size();
+  double size2 = (double)array2.size();
   // Check all arrays have the same size
   if ( array1.size() != array2.size() ){
-    printf("WARNING(array_compare): array1 and array2 of different length! returned value of 1000000.\n");
-    return(1000000.0);
+    conversion = size1 / size2 ;
+    if (debug == 1) printf("WARNING(array_compare): array1 (%d) and array2 (%d) of different length! Using conversion factor %3.2f to compare arrays.\n", (int)array1.size(), (int)array2.size(), conversion);
   }
   // Check if the start and stop values are valid 
   if ( start < 0 ) start = 0;
@@ -2570,14 +3028,25 @@ double array_compare(vector<double> &array1, vector<double> &array2, vector<doub
     printf("WARNING(array_compare): array1 and weigths of different length! returned value of 1000000.\n");
     return(1000000.0);
   }
+  // Check position adjustment parameter is an "integer"
+  if ( floor(par[1]) != ceil(par[1]) ){
+    if (debug == 1 ) printf("WARNING(array_adjust): Passed position parameter par[1] is not an integer. Rounded to %d.\n", (int)round(par[1]));
+    par[1] = (double)round(par[1]);
+  }
+
   // 
   double sum = 0.0;
+  int n2 = 0; 
   // No everything should be of the correct size
-  for (int n = start; n < end; n++){
+  for (int n1 = start; n1 < end; n1++){
+    // Using array1 as reference frame, calculate equivalent sample value for array2
+    n2 = (int)( (int)(round(n1/conversion)) - (int)par[1] );
     // 
-    sum += weigths[n] * abs( array1[n]-array2[n] );
+    if (n2 > (int)array2.size()) printf("WARNING(array_compare): Conversion went wrong, calculated sample n2=%d is larger than array2 size %d!\n", n2, (int)array2.size());
+    // Do the sum
+    sum += weigths[n1] * abs( array1[n1]- par[0] * array2[n2] );
   }
-  return(sum);
+  return(sum/(end-start));
 }
 
 /* Adjust vector according to adjustment parameters vector<double> x:
@@ -2586,59 +3055,60 @@ double array_compare(vector<double> &array1, vector<double> &array2, vector<doub
 */
 vector<double> array_adjust(vector<double> &array, vector<double> &x, int debug){
   // Return array
-  vector<double> returned;
-  for (int i = 0; i < (int)array.size(); i++) returned.push_back(0.0);
-  vector<double> dummy;
-  for (int i = 0; i < (int)array.size(); i++) dummy.push_back(0.0);
+  vector<double> returned ((int)array.size(), 0.0);
+  debug=0;
+  // Parameters:
+  double A = x[0]; // Amplitude
+  double m = x[1]; // Time shift
+  // for (int i = 0; i < (int)array.size(); i++) returned.push_back(0.0);
+  vector<double> dummy ((int)array.size(), 0.0);
+  // for (int i = 0; i < (int)array.size(); i++) dummy.push_back(0.0);
   // Check if passed parameters are healthy
   if ( (int)array.size() == 0 ){
-    printf("WARNING(array_adjust): Passed array is empty. Return empty array.\n"); 
+    if (debug == 1 ) printf("WARNING(array_adjust): Passed array is empty. Return empty array.\n"); 
     returned.clear();
     return(returned);
   }
   if ( (int)x.size() != 2 ){
-    printf("WARNING(array_adjust): Passed parameter array is of wrong dimension (has to be N=2). Return empty array.\n"); 
+    if (debug == 1 ) printf("WARNING(array_adjust): Passed parameter array is of wrong dimension (has to be N=2). Return empty array.\n"); 
     returned.clear();
     return(returned);
   }
   // Check position adjustment parameter is an "integer"
-  if ( floor(x[1]) != ceil(x[1]) ){
-    printf("WARNING(array_adjust): Passed position parameter x[1] is not an integer. Return empty array.\n"); 
-    returned.clear();
-    return(returned);
+  if ( floor(m) != ceil(m) ){
+    if (debug == 1 ) printf("WARNING(array_adjust): Passed position parameter x[1] is not an integer. Rounded to %d.\n", (int)round(x[1]));
+    m = (double)round(x[1]);
   }
   // Check amplitude adjustment parameter is an greater 0 (not 0 or negative)
-  if ( x[0] <= 0 ){
-    printf("WARNING(array_adjust): Passed amplitude parameter x[0] is not greter 0. Return empty array.\n"); 
-    returned.clear();
-    return(returned);
+  if ( A <= 0 ){
+    if (debug == 1 ) printf("WARNING(array_adjust): Passed amplitude parameter x[0] is not greter 0. Return x[0] = 1.\n"); 
+    A = 0.0;
   }
   // Adjust amplitude 
   for (int i = 0; i < (int)array.size(); i++){
-    dummy[i] = array[i] * x[0];
-    if (debug == 1) printf("DEBUG(array_compare(array[i], x[0], array[i] * x[0]): %3.1f %3.1f %3.1f\n", array[i], x[0], array[i] * x[0]);
+    dummy[i] = array[i] * A;
   }
   // If shift adjustment is zero then dont shift and return array here
-  if ( x[1] == 0 ){
-    if (debug == 1) printf("DEBUG(array_compare): x[1] = 0\n");
+  if ( m == 0 ){
+    if (debug == 1 ) if (debug == 1) printf("DEBUG(array_adjust): m = 0\n");
     return(dummy);
   }  
-  // Shift array by x[1] indizes, the sign is important: - is shift to lower indices, + is shift to higher indices
+  // Shift array by m indizes, the sign is important: - is shift to lower indices, + is shift to higher indices
   // If shift is negative:
-  if ( x[1] < 0 ) {
-    for (int i = 0; i < (int)array.size()-(int)(abs(x[1])); i++){
-      returned[i] = dummy[i+abs(x[1])]; // The rightmost x[1] values of the array are 0
+  if ( m < 0 ) {
+    for (int i = 0; i < (int)array.size()-(int)(abs(m)); i++){
+      returned[i] = dummy[i+abs(m)]; // The rightmost m values of the array are 0
     } 
   }
   // If shift is positive:
-  if ( x[1] > 0 ) {
-    for (int i = 0; i < (int)array.size()-(int)(abs(x[1])); i++){
-      returned[i+abs(x[1])] = dummy[i]; // The leftmost x[1] values of the array are 0
+  if ( m > 0 ) {
+    for (int i = 0; i < (int)array.size()-(int)(abs(m)); i++){
+      returned[i+abs(m)] = dummy[i]; // The leftmost m values of the array are 0
     } 
   }
   // Test if the adjusted array has the same dimension as the input array
   if ( (int)returned.size() != (int)array.size() ){
-    printf("WARNING(array_adjust): After processing, the adjusted arrray lost initial dimension (bug in code).\n"); 
+    if (debug == 1 ) printf("WARNING(array_adjust): After processing, the adjusted arrray lost initial dimension (bug in code).\n"); 
     returned.clear();
     return(returned);
   }
@@ -2704,12 +3174,12 @@ void init_multis_norm(vector<vector<vector<multis_norm_struct> > > &array, int c
 void init_hists(int channels){
   // Some variables
   char name[100];
-  int bins_pulsheight=20000;
-  int range_pulsheight=20000*GENERAL_SCALING;
-  int bins_integral=5000;
-  int range_integral=500000*GENERAL_SCALING;
-  int bins_ratio=2000;
-  int range_ratio=1000;
+  int bins_pulsheight=40000;
+  int range_pulsheight=80000*GENERAL_SCALING;
+  int bins_integral=10000;
+  int range_integral=1000000*GENERAL_SCALING;
+  int bins_ratio=4000;
+  int range_ratio=4000;
   // gStyle->SetOptFit(1111);
   gStyle->SetOptFit(1111);
   // If in multi sampling calibration mode, initialize the following
@@ -2810,7 +3280,8 @@ void init_hists(int channels){
         }
       }
       // 2D Hists for the proto trace
-      hfile->cd("JUNK");
+      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      hfile->cd(name);
       sprintf(name,"PROTO_TRACE%02d",i);
       RAW_CALIB[i].TH2D_proto_trace.hist=new TH2D(name,"",
                       300,0,300, // x-dimension
@@ -3021,6 +3492,70 @@ void init_hists(int channels){
           TMAX[i].time[j].h_timing[k].hist->GetYaxis()->SetTitle("Counts");
         }
       }
+      //
+      // Enter the NMO folder
+      //
+      hfile->cd("ENERGY/PULSE_HIGHT/NMO");
+      sprintf(name,"ENERGY_NMO%02d",i);
+      NMO[i].h_energy.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+      NMO[i].h_energy.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+      NMO[i].h_energy.hist->GetYaxis()->SetTitle("Counts");
+      hfile->cd("ENERGY/INTEGRAL/NMO");
+      sprintf(name,"INTEGRAL_NMO%02d",i);
+      NMO[i].h_integral.hist=new TH1D(name,"",bins_integral,0,range_integral);
+      NMO[i].h_integral.hist->GetXaxis()->SetTitle("Pulse_integral / a.u.");
+      NMO[i].h_integral.hist->GetYaxis()->SetTitle("Counts");
+      sprintf(name,"RATIO_NMO%02d",i);
+      NMO[i].h_ratio.hist=new TH1D(name,"",bins_ratio,0,range_ratio);
+      NMO[i].h_ratio.hist->GetXaxis()->SetTitle("Pulse_ratio / a.u.");
+      NMO[i].h_ratio.hist->GetYaxis()->SetTitle("Counts");
+      // Tagged energy
+      if (strcmp(MODE, "BEAM") == 0){
+        hfile->cd("ENERGY/TAGGER/PULSE_HIGHT/NMO");
+        for (Int_t k=0; k<N_E_WINDOW; k++){ 
+          sprintf(name,"NMO_TAGGER%02d_%02d",i, k);
+          NMO[i].tagged[k].h_energy.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          NMO[i].tagged[k].h_energy.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+          NMO[i].tagged[k].h_energy.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_TAGGER_M%02d_%02d",i, k);
+          NMO[i].tagged[k].h_energy_m.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          NMO[i].tagged[k].h_energy_m.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+          NMO[i].tagged[k].h_energy_m.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_TAGGER_MT%02d_%02d",i, k);
+          NMO[i].tagged[k].h_energy_mt.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          NMO[i].tagged[k].h_energy_mt.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+          NMO[i].tagged[k].h_energy_mt.hist->GetYaxis()->SetTitle("Counts");
+        }
+        hfile->cd("ENERGY/TAGGER/INTEGRAL/NMO");
+        for (Int_t k=0; k<N_E_WINDOW; k++){ 
+          sprintf(name,"NMO_TAGGER%02d_%02d",i, k);
+          NMO[i].tagged[k].h_integral.hist=new TH1D(name,"",bins_integral,0,range_integral);
+          NMO[i].tagged[k].h_integral.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+          NMO[i].tagged[k].h_integral.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_TAGGER_M%02d_%02d",i, k);
+          NMO[i].tagged[k].h_integral_m.hist=new TH1D(name,"",bins_integral,0,range_integral);
+          NMO[i].tagged[k].h_integral_m.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+          NMO[i].tagged[k].h_integral_m.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_TAGGER_MT%02d_%02d",i, k);
+          NMO[i].tagged[k].h_integral_mt.hist=new TH1D(name,"",bins_integral,0,range_integral);
+          NMO[i].tagged[k].h_integral_mt.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+          NMO[i].tagged[k].h_integral_mt.hist->GetYaxis()->SetTitle("Counts");
+        }
+      }
+      // Timing
+      hfile->cd("TIMING/NMO/HISTOGRAMS");
+      for (Int_t j=0; j<(int)NMO[i].time.size(); j++){ 
+        for (Int_t k=0; k<N_E_WINDOW; k++){ 
+          sprintf(name,"NMO_TIMINGg_ENERGY_WINDOW %i-%i XTAL%i/%i",
+            (int) E_WINDOW_LEFT + E_WINDOW_LENGTH*k,
+            (int) E_WINDOW_LEFT + E_WINDOW_LENGTH*k +E_WINDOW_LENGTH, 
+            i, 
+            j);
+          NMO[i].time[j].h_timing[k].hist = new TH1D(name,"",1000,-100,100);
+          NMO[i].time[j].h_timing[k].hist->GetXaxis()->SetTitle("Time difference / ns");
+          NMO[i].time[j].h_timing[k].hist->GetYaxis()->SetTitle("Counts");
+        }
+      }
     }
   }
   // Additional stuff
@@ -3037,6 +3572,15 @@ void init_hists(int channels){
       TAGGER.multiples_per_count[k] = 0;
       TAGGER.multiples_per_channel[k] = 0;
     }
+    // Tagger time vs full energy in ECAL
+    hfile->cd("ENERGY/TAGGER/TIME");
+    TAGGER.h_tagger_vs_energy.hist = new TH2D("Tagger_time_vs_energy","Tagger_time_vs_energy",
+                      bins_pulsheight,0,range_pulsheight, // x-dimension
+                      1000,500,1500); // y-dimension
+    TAGGER.h_tagger_vs_energy.hist->GetXaxis()->SetTitle("Energy in ECAL25 [MeV]");
+    TAGGER.h_tagger_vs_energy.hist->GetYaxis()->SetTitle("Tagger time in channels");
+
+
     //
     // Initialize the detector sum stuff
     //
@@ -3083,6 +3627,17 @@ void init_hists(int channels){
         ECAL25[i].h_energy.hist->GetYaxis()->SetTitle("Counts");
         hfile->cd("ENERGY/SUM/INTEGRAL/TMAX");
         ECAL25[i].h_integral.hist=new TH1D("INTEGRAL_SUM_TMAX","",bins_integral,0,range_integral);
+        ECAL25[i].h_integral.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+        ECAL25[i].h_integral.hist->GetYaxis()->SetTitle("Counts");
+      }
+      if (i == 4){
+        // Initialize the energy histograms
+        hfile->cd("ENERGY/SUM/PULSE_HIGHT/NMO");
+        ECAL25[i].h_energy.hist=new TH1D("ENERGY_SUM_NMO","",bins_pulsheight,0,range_pulsheight);
+        ECAL25[i].h_energy.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+        ECAL25[i].h_energy.hist->GetYaxis()->SetTitle("Counts");
+        hfile->cd("ENERGY/SUM/INTEGRAL/NMO");
+        ECAL25[i].h_integral.hist=new TH1D("INTEGRAL_SUM_NMO","",bins_integral,0,range_integral);
         ECAL25[i].h_integral.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
         ECAL25[i].h_integral.hist->GetYaxis()->SetTitle("Counts");
       }
@@ -3202,6 +3757,34 @@ void init_hists(int channels){
           ECAL25[i].tagged[k].h_integral_mt.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
           ECAL25[i].tagged[k].h_integral_mt.hist->GetYaxis()->SetTitle("Counts");
         }
+        if (i==4){
+          hfile->cd("ENERGY/SUM/TAGGER/PULSE_HIGHT/NMO");
+          sprintf(name,"NMO_PH_SUM_TAGGER_%02d", k);
+          ECAL25[i].tagged[k].h_energy.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          ECAL25[i].tagged[k].h_energy.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_energy.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_PH_SUM_TAGGER_M_%02d", k);
+          ECAL25[i].tagged[k].h_energy_m.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          ECAL25[i].tagged[k].h_energy_m.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_energy_m.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_PH_SUM_TAGGER_MT_%02d", k);
+          ECAL25[i].tagged[k].h_energy_mt.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          ECAL25[i].tagged[k].h_energy_mt.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_energy_mt.hist->GetYaxis()->SetTitle("Counts");
+          hfile->cd("ENERGY/SUM/TAGGER/INTEGRAL/RAW_CALIB");
+          sprintf(name,"NMO_INT_SUM_TAGGER_%02d", k);
+          ECAL25[i].tagged[k].h_integral.hist=new TH1D(name,"",bins_integral,0,range_integral);
+          ECAL25[i].tagged[k].h_integral.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_integral.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_INT_SUM_TAGGER_M_%02d", k);
+          ECAL25[i].tagged[k].h_integral_m.hist=new TH1D(name,"",bins_integral,0,range_integral);
+          ECAL25[i].tagged[k].h_integral_m.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_integral_m.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"NMO_INT_SUM_TAGGER_MT_%02d", k);
+          ECAL25[i].tagged[k].h_integral_mt.hist=new TH1D(name,"",bins_integral,0,range_integral);
+          ECAL25[i].tagged[k].h_integral_mt.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_integral_mt.hist->GetYaxis()->SetTitle("Counts");
+        }
       }
     }
   }
@@ -3249,16 +3832,19 @@ void fill_hists(){
       if(MA[i].energy>0) MA[i].h_energy.hist->Fill(MA[i].energy);
       if(MWD[i].energy>0) MWD[i].h_energy.hist->Fill(MWD[i].energy);
       if(TMAX[i].energy>0) TMAX[i].h_energy.hist->Fill(TMAX[i].energy);
+      if(NMO[i].energy>0) NMO[i].h_energy.hist->Fill(NMO[i].energy);
       // Fill the integral and ratio histograms
       if(RAW_CALIB[i].integral>0) RAW_CALIB[i].h_integral.hist->Fill(RAW_CALIB[i].integral);
       if(MA[i].integral>0) MA[i].h_integral.hist->Fill(MA[i].integral);
       if(MWD[i].integral>0) MWD[i].h_integral.hist->Fill(MWD[i].integral);
       if(TMAX[i].integral>0) TMAX[i].h_integral.hist->Fill(TMAX[i].integral);
+      if(NMO[i].integral>0) NMO[i].h_integral.hist->Fill(NMO[i].integral);
       //
       if(RAW_CALIB[i].ratio>0) RAW_CALIB[i].h_ratio.hist->Fill(RAW_CALIB[i].ratio);
       if(MA[i].ratio>0) MA[i].h_ratio.hist->Fill(MA[i].ratio);
       if(MWD[i].ratio>0) MWD[i].h_ratio.hist->Fill(MWD[i].ratio);
       if(TMAX[i].ratio>0) TMAX[i].h_ratio.hist->Fill(TMAX[i].ratio);
+      if(NMO[i].ratio>0) NMO[i].h_ratio.hist->Fill(NMO[i].ratio);
       // Fill the timing histograms
       for(int j=0; j<(int)RAW_CALIB.size(); j++){
         // Each energy bin
@@ -3267,6 +3853,7 @@ void fill_hists(){
           if (MA[i].time[j].timing[k] != 0.0) MA[i].time[j].h_timing[k].hist->Fill(MA[i].time[j].timing[k]);
           if (MWD[i].time[j].timing[k] != 0.0) MWD[i].time[j].h_timing[k].hist->Fill(MWD[i].time[j].timing[k]);
           if (TMAX[i].time[j].timing[k] != 0.0) TMAX[i].time[j].h_timing[k].hist->Fill(TMAX[i].time[j].timing[k]);
+          if (NMO[i].time[j].timing[k] != 0.0) NMO[i].time[j].h_timing[k].hist->Fill(NMO[i].time[j].timing[k]);
         }
       }
       // In beam mode also fill the tagger energy histograms
@@ -3277,31 +3864,37 @@ void fill_hists(){
           if (MA[i].tagged[k].energy != 0.0) MA[i].tagged[k].h_energy.hist->Fill(MA[i].tagged[k].energy);
           if (MWD[i].tagged[k].energy != 0.0) MWD[i].tagged[k].h_energy.hist->Fill(MWD[i].tagged[k].energy);
           if (TMAX[i].tagged[k].energy != 0.0) TMAX[i].tagged[k].h_energy.hist->Fill(TMAX[i].tagged[k].energy);
+          if (NMO[i].tagged[k].energy != 0.0) NMO[i].tagged[k].h_energy.hist->Fill(NMO[i].tagged[k].energy);
           //
           if (RAW_CALIB[i].tagged[k].integral != 0.0) RAW_CALIB[i].tagged[k].h_integral.hist->Fill(RAW_CALIB[i].tagged[k].integral);
           if (MA[i].tagged[k].integral != 0.0) MA[i].tagged[k].h_integral.hist->Fill(MA[i].tagged[k].integral);
           if (MWD[i].tagged[k].integral != 0.0) MWD[i].tagged[k].h_integral.hist->Fill(MWD[i].tagged[k].integral);
           if (TMAX[i].tagged[k].integral != 0.0) TMAX[i].tagged[k].h_integral.hist->Fill(TMAX[i].tagged[k].integral);
+          if (NMO[i].tagged[k].integral != 0.0) NMO[i].tagged[k].h_integral.hist->Fill(NMO[i].tagged[k].integral);
           // W/o multiples
           if (RAW_CALIB[i].tagged[k].energy_m != 0.0) RAW_CALIB[i].tagged[k].h_energy_m.hist->Fill(RAW_CALIB[i].tagged[k].energy_m);
           if (MA[i].tagged[k].energy_m != 0.0) MA[i].tagged[k].h_energy_m.hist->Fill(MA[i].tagged[k].energy_m);
           if (MWD[i].tagged[k].energy_m != 0.0) MWD[i].tagged[k].h_energy_m.hist->Fill(MWD[i].tagged[k].energy_m);
           if (TMAX[i].tagged[k].energy_m != 0.0) TMAX[i].tagged[k].h_energy_m.hist->Fill(TMAX[i].tagged[k].energy_m);
+          if (NMO[i].tagged[k].energy_m != 0.0) NMO[i].tagged[k].h_energy_m.hist->Fill(NMO[i].tagged[k].energy_m);
           //
           if (RAW_CALIB[i].tagged[k].integral_m != 0.0) RAW_CALIB[i].tagged[k].h_integral_m.hist->Fill(RAW_CALIB[i].tagged[k].integral_m);
           if (MA[i].tagged[k].integral_m != 0.0) MA[i].tagged[k].h_integral_m.hist->Fill(MA[i].tagged[k].integral_m);
           if (MWD[i].tagged[k].integral_m != 0.0) MWD[i].tagged[k].h_integral_m.hist->Fill(MWD[i].tagged[k].integral_m);
           if (TMAX[i].tagged[k].integral_m != 0.0) TMAX[i].tagged[k].h_integral_m.hist->Fill(TMAX[i].tagged[k].integral_m);
+          if (NMO[i].tagged[k].integral_m != 0.0) NMO[i].tagged[k].h_integral_m.hist->Fill(NMO[i].tagged[k].integral_m);
           // w/o multiples and w/ timing window
           if (RAW_CALIB[i].tagged[k].energy_mt != 0.0) RAW_CALIB[i].tagged[k].h_energy_mt.hist->Fill(RAW_CALIB[i].tagged[k].energy_mt);
           if (MA[i].tagged[k].energy_mt != 0.0) MA[i].tagged[k].h_energy_mt.hist->Fill(MA[i].tagged[k].energy_mt);
           if (MWD[i].tagged[k].energy_mt != 0.0) MWD[i].tagged[k].h_energy_mt.hist->Fill(MWD[i].tagged[k].energy_mt);
           if (TMAX[i].tagged[k].energy_mt != 0.0) TMAX[i].tagged[k].h_energy_mt.hist->Fill(TMAX[i].tagged[k].energy_mt);
+          if (NMO[i].tagged[k].energy_mt != 0.0) NMO[i].tagged[k].h_energy_mt.hist->Fill(NMO[i].tagged[k].energy_mt);
           //
           if (RAW_CALIB[i].tagged[k].integral_mt != 0.0) RAW_CALIB[i].tagged[k].h_integral_mt.hist->Fill(RAW_CALIB[i].tagged[k].integral_mt);
           if (MA[i].tagged[k].integral_mt != 0.0) MA[i].tagged[k].h_integral_mt.hist->Fill(MA[i].tagged[k].integral_mt);
           if (MWD[i].tagged[k].integral_mt != 0.0) MWD[i].tagged[k].h_integral_mt.hist->Fill(MWD[i].tagged[k].integral_mt);
           if (TMAX[i].tagged[k].integral_mt != 0.0) TMAX[i].tagged[k].h_integral_mt.hist->Fill(TMAX[i].tagged[k].integral_mt);
+          if (NMO[i].tagged[k].integral_mt != 0.0) NMO[i].tagged[k].h_integral_mt.hist->Fill(NMO[i].tagged[k].integral_mt);
         }
       }
     }
@@ -3317,17 +3910,23 @@ void fill_hists(){
         if (ECAL25[i].energy > 0) ECAL25[i].h_energy.hist->Fill(ECAL25[i].energy);
         if (ECAL25[i].integral > 0) ECAL25[i].h_integral.hist->Fill(ECAL25[i].integral);
       }
-    }
-    // The tagged energy sum
-    for(int k=0; k<N_E_WINDOW; k++){
-      for(int i=0; i<(int)ECAL25.size(); i++){
-        if (ECAL25[i].tagged[k].energy > 0) ECAL25[i].tagged[k].h_energy.hist->Fill( ECAL25[i].tagged[k].energy );
-        if (ECAL25[i].tagged[k].energy_m > 0) ECAL25[i].tagged[k].h_energy_m.hist->Fill( ECAL25[i].tagged[k].energy_m );
-        if (ECAL25[i].tagged[k].energy_mt > 0) ECAL25[i].tagged[k].h_energy_mt.hist->Fill( ECAL25[i].tagged[k].energy_mt );
-        //
-        if (ECAL25[i].tagged[k].integral > 0) ECAL25[i].tagged[k].h_integral.hist->Fill( ECAL25[i].tagged[k].integral );
-        if (ECAL25[i].tagged[k].integral_m > 0) ECAL25[i].tagged[k].h_integral_m.hist->Fill( ECAL25[i].tagged[k].integral_m );
-        if (ECAL25[i].tagged[k].integral_mt > 0) ECAL25[i].tagged[k].h_integral_mt.hist->Fill( ECAL25[i].tagged[k].integral_mt );
+      // The tagged energy sum
+      for(int k=0; k<N_E_WINDOW; k++){
+        for(int i=0; i<(int)ECAL25.size(); i++){
+          if (ECAL25[i].tagged[k].energy > 0) ECAL25[i].tagged[k].h_energy.hist->Fill( ECAL25[i].tagged[k].energy );
+          if (ECAL25[i].tagged[k].energy_m > 0) ECAL25[i].tagged[k].h_energy_m.hist->Fill( ECAL25[i].tagged[k].energy_m );
+          if ( i == 3 && LIN_COMP != 0.0) {
+            if (ECAL25[i].tagged[k].energy_mt > 0) ECAL25[i].tagged[k].h_energy_mt.hist->Fill( SIPMlinearize(ECAL25[i].tagged[k].energy_mt, LIN_COMP) );
+          }
+          else {
+            if (ECAL25[i].tagged[k].energy_mt > 0) ECAL25[i].tagged[k].h_energy_mt.hist->Fill( ECAL25[i].tagged[k].energy_mt );
+          }
+          
+          //
+          if (ECAL25[i].tagged[k].integral > 0) ECAL25[i].tagged[k].h_integral.hist->Fill( ECAL25[i].tagged[k].integral );
+          if (ECAL25[i].tagged[k].integral_m > 0) ECAL25[i].tagged[k].h_integral_m.hist->Fill( ECAL25[i].tagged[k].integral_m );
+          if (ECAL25[i].tagged[k].integral_mt > 0) ECAL25[i].tagged[k].h_integral_mt.hist->Fill( ECAL25[i].tagged[k].integral_mt );
+        }
       }
     }
   }
@@ -3576,7 +4175,7 @@ Int_t largest_1Dbin(TH1D *hist, Int_t lower = 0, Int_t upper = 100000){
   Int_t largest_bin = 0;
   // Int_t xmin = hist->GetXaxis()->GetXmin(); // Xmin of histogram
   // Int_t xmax = hist->GetXaxis()->GetXmax(); // Xmin of histogram
-  for (Int_t i = lower; i < (upper+abs(lower)); i++){
+  for (Int_t i = 0; i < (upper+abs(lower)); i++){
     if (largest < hist->GetBinContent(i)){ 
       largest_bin = i ; // Norm it to the hist range
       largest = hist->GetBinContent(i);
@@ -3594,10 +4193,6 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
   //hist->GetXaxis()->SetRange(hist->GetMean()-range,hist->GetMean()+range);
   // Check for which fit function is chosen
   int n;
-  // If gauss
-  // Field 0,1: amp, amp_err
-  // Field 2,3: mean, mean_err
-  // Field 4,5: std, std_err 
   if (strcmp(func, "gaus")==0){n = 3;}
   else if (strcmp(func, "multigaus")==0){n = 3;}
   else if (strcmp(func, "langaus")==0){n = 6;}
@@ -3617,6 +4212,9 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
   // Gaus fit
   if (strcmp(func, "gaus")==0){
     n = 3;
+    // Field 0,1: amp, amp_err
+    // Field 2,3: mean, mean_err
+    // Field 4,5: std, std_err 
     hist->SetAxisRange(lower, upper);
     // Check if subrange of hist is empty
     if ( (int) hist->Integral() < 2 ){
@@ -3721,7 +4319,87 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     params.push_back(SNRPeak); params.push_back(SNRFWHM);
     return(params);
   }
+  // Novosibirsk function
+  // if (strcmp(func, "novosibirsk")==0){
+  //   // Declare observable x
+  //   int lower = hist->GetXaxis()->GetXmin();
+  //   int upper = hist->GetXaxis()->GetXmax();
+  //   RooRealVar x("x","x",lower,upper);
+  //   // --- Import data ---
+  //   RooDataHist data("data","data",x,Import(*hist)) ;
+  //   // --- Parameters ---
+  //   RooRealVar mean("sigmean","mean",5.28,5.20,5.30);
+  //   RooRealVar width("sigwidth","width",0.0027,0.001,1.);
+  //   RooRealVar tail("sigwidth","tail",0.0027,0.001,1.);
+
+  //   return(params);
+  // }
+
+
+  // 
   else {return(params);}
+}
+
+vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t lower, Double_t upper, int verbose){
+  //
+  //
+  vector<Double_t> params;
+  int n = 0;
+  TF1 *fit;
+  //
+  if (strcmp(func, "SIPMpixel")==0){
+    n = 1;
+    Double_t par[1];
+    par[0] = 1000.;
+    fit = new TF1( "SIPMpixel_fit", SIPMpixel,  lower, upper, 1);
+    // printf("%3.3f\n", par[0]);
+    fit->SetParameters(par);
+    fit->SetParNames("N_tot");
+    graph->Fit("SIPMpixel_fit", "R", "SAME", lower, upper);
+
+    for (int i = 0; i < n; i ++){
+      params.push_back(fit->GetParameter(i));
+      params.push_back(fit->GetParError(i));
+    }
+  }
+  //
+  //
+  if (strcmp(func, "resolution")==0){
+    // par[0]: A is stochastic shower development parameter
+    // par[1]: B is parameter for electric noice  
+    // par[2]: C is free parameter
+    // par[3]: D is third degree parameter
+    // par[4]: x_0 is pole shift parameter
+    n = 5;
+    //
+    double par_start[n+1], par_low[n+1], par_up[n+1];
+    par_low[0] = 0.001; par_start[0] = 430; par_up[0] = 1000;
+    par_low[1] = 0.001; par_start[1] = 2200; par_up[1] = 50000;
+    par_low[2] = 1; par_start[2] = 15; par_up[2] = 50;
+    par_low[3] = 0.001; par_start[3] = 1000; par_up[3] = 50000;
+    par_low[4] = 0.01; par_start[4] = 1; par_up[4] = 25;
+    //
+    fit = new TF1( "Resolution_fit", resolution,  lower, upper, n);
+    // printf("%3.3f\n", par[0]);
+    fit->SetParameters(par_start);
+    fit->SetParNames("A", "B", "C", "D", "x_{0}");
+    //
+    for (int i=0; i<n; i++) {
+      fit->SetParLimits(i, par_low[i], par_up[i]);
+    }
+
+    //
+    graph->Fit("Resolution_fit", "R", "SAME", lower, upper);
+
+    for (int i = 0; i < n; i ++){
+      params.push_back(fit->GetParameter(i));
+      params.push_back(fit->GetParError(i));
+    }
+
+
+
+  }
+  return params;
 }
 
 // Fast linear regression fit 
@@ -3837,13 +4515,15 @@ vector<double> MWD_filter(vector<double> &trace, double calib){
 }
 
 // Digital Constant Fraction Discriminator 
-vector<double> CFD(vector<double> &trace){
+vector<double> CFD(vector<double> &trace, double multiplier){
   // Return array
   vector<double> converted;
+  // Adjust DELAY to the tracelength
+  int delay = (int)((multiplier)*DELAY);
   // For each sample of the trac do:
 	for(int n=0; n < (int)trace.size(); n++){
     // Calculate the Constant Fraction Trace
-		if (n-DELAY>0) converted.push_back(trace[n-DELAY] - CFD_fraction * trace[n]);
+		if (n-delay>0) converted.push_back(trace[n-delay] - CFD_fraction * trace[n]);
     else {converted.push_back(0);}	  // Calibration
 	}
 	return converted;
@@ -3889,11 +4569,13 @@ void build_structure(){
   hfile->mkdir("ENERGY/PULSE_HIGHT/MA");
   hfile->mkdir("ENERGY/PULSE_HIGHT/MWD");
   hfile->mkdir("ENERGY/PULSE_HIGHT/TMAX");
+  hfile->mkdir("ENERGY/PULSE_HIGHT/NMO");
   hfile->mkdir("ENERGY/INTEGRAL");
   hfile->mkdir("ENERGY/INTEGRAL/RAW_CALIB");
   hfile->mkdir("ENERGY/INTEGRAL/MA");
   hfile->mkdir("ENERGY/INTEGRAL/MWD");
   hfile->mkdir("ENERGY/INTEGRAL/TMAX");
+  hfile->mkdir("ENERGY/INTEGRAL/NMO");
   // In case a tagger is used in beam mode
   if (strcmp(MODE, "BEAM") == 0){
     hfile->mkdir("ENERGY/TAGGER");
@@ -3905,12 +4587,14 @@ void build_structure(){
     hfile->mkdir("ENERGY/TAGGER/PULSE_HIGHT/MA");
     hfile->mkdir("ENERGY/TAGGER/PULSE_HIGHT/MWD");
     hfile->mkdir("ENERGY/TAGGER/PULSE_HIGHT/TMAX");
+    hfile->mkdir("ENERGY/TAGGER/PULSE_HIGHT/NMO");
     //
     hfile->mkdir("ENERGY/TAGGER/INTEGRAL");
     hfile->mkdir("ENERGY/TAGGER/INTEGRAL/RAW_CALIB");
     hfile->mkdir("ENERGY/TAGGER/INTEGRAL/MA");
     hfile->mkdir("ENERGY/TAGGER/INTEGRAL/MWD");
     hfile->mkdir("ENERGY/TAGGER/INTEGRAL/TMAX");
+    hfile->mkdir("ENERGY/TAGGER/INTEGRAL/NMO");
     // For the energy sum
     hfile->mkdir("ENERGY/SUM");
     //
@@ -3921,23 +4605,27 @@ void build_structure(){
     hfile->mkdir("ENERGY/SUM/PULSE_HIGHT/MA");
     hfile->mkdir("ENERGY/SUM/PULSE_HIGHT/MWD");
     hfile->mkdir("ENERGY/SUM/PULSE_HIGHT/TMAX");
+    hfile->mkdir("ENERGY/SUM/PULSE_HIGHT/NMO");
     hfile->mkdir("ENERGY/SUM/INTEGRAL");
     hfile->mkdir("ENERGY/SUM/INTEGRAL/RAW_CALIB");
     hfile->mkdir("ENERGY/SUM/INTEGRAL/MA");
     hfile->mkdir("ENERGY/SUM/INTEGRAL/MWD");
     hfile->mkdir("ENERGY/SUM/INTEGRAL/TMAX");
+    hfile->mkdir("ENERGY/SUM/INTEGRAL/NMO");
     //
     hfile->mkdir("ENERGY/SUM/TAGGER/PULSE_HIGHT");
     hfile->mkdir("ENERGY/SUM/TAGGER/PULSE_HIGHT/RAW_CALIB");
     hfile->mkdir("ENERGY/SUM/TAGGER/PULSE_HIGHT/MA");
     hfile->mkdir("ENERGY/SUM/TAGGER/PULSE_HIGHT/MWD");
     hfile->mkdir("ENERGY/SUM/TAGGER/PULSE_HIGHT/TMAX");
+    hfile->mkdir("ENERGY/SUM/TAGGER/PULSE_HIGHT/NMO");
     //
     hfile->mkdir("ENERGY/SUM/TAGGER/INTEGRAL");
     hfile->mkdir("ENERGY/SUM/TAGGER/INTEGRAL/RAW_CALIB");
     hfile->mkdir("ENERGY/SUM/TAGGER/INTEGRAL/MA");
     hfile->mkdir("ENERGY/SUM/TAGGER/INTEGRAL/MWD");
     hfile->mkdir("ENERGY/SUM/TAGGER/INTEGRAL/TMAX");
+    hfile->mkdir("ENERGY/SUM/TAGGER/INTEGRAL/NMO");
 
 
   }
@@ -3953,6 +4641,8 @@ void build_structure(){
   hfile->mkdir("TIMING/MWD/HISTOGRAMS");
   hfile->mkdir("TIMING/TMAX");
   hfile->mkdir("TIMING/TMAX/HISTOGRAMS");
+  hfile->mkdir("TIMING/NMO");
+  hfile->mkdir("TIMING/NMO/HISTOGRAMS");
   // Create subfolders for each channel
   char name[100];
   for (int i = 0; i < CHANNELS_EFF; i++){
@@ -3964,6 +4654,8 @@ void build_structure(){
     hfile->mkdir(name);
     sprintf(name,"TIMING/TMAX/CHANNEL_%i", i);
     hfile->mkdir(name);
+    sprintf(name,"TIMING/NMO/CHANNEL_%i", i);
+    hfile->mkdir(name);
   }
 
   // Wave forms
@@ -3971,10 +4663,14 @@ void build_structure(){
   hfile->mkdir("WAVE_FORMS");
   hfile->mkdir("WAVE_FORMS/RAW");
   hfile->mkdir("WAVE_FORMS/RAW_CALIB");
-  hfile->mkdir("WAVE_FORMS/RAW_CALIB/PROTO_TRACE");
+  for (int i = 0; i < CHANNELS_EFF; i++){
+    sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+    hfile->mkdir(name);
+  }
   hfile->mkdir("WAVE_FORMS/MA");
   hfile->mkdir("WAVE_FORMS/MWD");
   hfile->mkdir("WAVE_FORMS/TMAX");
+  hfile->mkdir("WAVE_FORMS/NMO");
   hfile->mkdir("WAVE_FORMS/CFD");
   hfile->mkdir("WAVE_FORMS/CFD/RAW");
   hfile->mkdir("WAVE_FORMS/CFD/RAW_CALIB");
@@ -3984,25 +4680,51 @@ void build_structure(){
   hfile->mkdir("WAVE_FORMS/CFD/MWD/INTERPOL");
   hfile->mkdir("WAVE_FORMS/CFD/TMAX");
   hfile->mkdir("WAVE_FORMS/CFD/TMAX/INTERPOL");
+  hfile->mkdir("WAVE_FORMS/CFD/NMO");
+  hfile->mkdir("WAVE_FORMS/CFD/NMO/INTERPOL");
 
   // Junk
   hfile->mkdir("JUNK");
 }
 
-bool read_fir(const char *file){
+bool read_file(const char *file, const char *mode){
   // set status for return function
   ifstream file_in(file);
   // Check if file exists
   if (!file_in.is_open()){
-    printf("ERROR (read_fir): FIR filter parameter file specified in the config file does not exist!\n");
+    printf("ERROR (read_file): File %s does not exist!\n", file);
     return(false);
   }
-  else printf("read_fir: FIR coefficients read in under: %s\n", file);
+  else {
+    if (strcmp( mode, "FIR" )==0) printf("read_file: FIR coefficients read in under: %s\n", file);
+    if (strcmp( mode, "PROTO" )==0) printf("read_file: PROTO trace read in under: %s\n", file);
+  }
   // If yes, fill the parameters in the vector
   string line;
+  int i = 0;
+  int n = 0;
+  //
   while(getline(file_in, line) )
   {
-    FIR_COEF.push_back( stof(line) );
+    i = 0;
+    if (strcmp( mode, "FIR" )==0) FIR_COEF.push_back( stof(line) );
+    // Proto traces from file (multiple columns)
+    if (strcmp( mode, "PROTO" )==0) {
+      istringstream is_line(line);
+      string value;
+      // cout << line << endl;
+      while( getline(is_line, value, ';') )
+      {
+        // cout << value << endl;
+        // printf("%d %d\n", i, n);
+        // For the first line, initialize the proto container
+        if ( n == 0) PROTO.push_back( signal_struct() ); 
+        // Push back the values of each cell
+        PROTO[i].proto_trace_fit.push_back( stof(value) );
+        i++;
+      }
+      n++;
+    }
   }
   return(true);
 }
@@ -4046,6 +4768,8 @@ bool read_config(const char *file){
         if(strcmp(key.c_str(), "N_INTPOL_SAMPLES") == 0) N_INTPOL_SAMPLES = stoi(value);
         if(strcmp(key.c_str(), "NB") == 0) NB = stoi(value);
         if(strcmp(key.c_str(), "COINC_LEVEL") == 0) COINC_LEVEL = stoi(value);
+        if(strcmp(key.c_str(), "EXTRACT_PROTO") == 0) EXTRACT_PROTO = stoi(value);
+        if(strcmp(key.c_str(), "LIN_COMP") == 0) LIN_COMP = stod(value);
         // if(strcmp(key.c_str(), "MULTIS") == 0) MULTIS = stoi(value);
         if(strcmp(key.c_str(), "THRESHOLD_MULTIPLICY") == 0) THRESHOLD_MULTIPLICY = stod(value);
         if(strcmp(key.c_str(), "SATURATION_FILTER") == 0) SATURATION_FILTER = stoi(value);
@@ -4058,10 +4782,19 @@ bool read_config(const char *file){
         if(strcmp(key.c_str(), "TAU") == 0) TAU = stod(value);
         if(strcmp(key.c_str(), "CFD_fraction") == 0) CFD_fraction = stod(value);
         if(strcmp(key.c_str(), "GENERAL_SCALING") == 0) GENERAL_SCALING = stod(value);
+        if(strcmp(key.c_str(), "LOWER_RATIO") == 0) LOWER_RATIO = stod(value);
+        if(strcmp(key.c_str(), "UPPER_RATIO") == 0) UPPER_RATIO = stod(value);
         // Read in FIR filter coefficients if chosen
-        if(strcmp(key.c_str(), "FIR") == 0) {
-          if (!read_fir(value.c_str())) {
+        if(strcmp(key.c_str(), "FIR_FILE") == 0) {
+          if (!read_file(value.c_str(), "FIR")) {
             printf("ERROR (read_config): FIR filter coef. file error.\n");
+            return(false);
+          }
+        }
+        // Read in PROTO trace if chosen
+        if(strcmp(key.c_str(), "PROTO_FILE") == 0 && EXTRACT_PROTO == 0) {
+          if (!read_file(value.c_str(), "PROTO")) {
+            printf("ERROR (read_config): PROTO trace file error.\n");
             return(false);
           }
         }
@@ -4083,6 +4816,7 @@ bool read_config(const char *file){
             if (value_counter == 1) CALIB.MA_energy.push_back( stod(value) );
             if (value_counter == 2) CALIB.MWD_energy.push_back( stod(value) );
             if (value_counter == 3) CALIB.TMAX_energy.push_back( stod(value) );
+            if (value_counter == 4) CALIB.NMO_energy.push_back( stod(value) ); 
             value_counter++;
           }
         }
@@ -4093,6 +4827,10 @@ bool read_config(const char *file){
               TAGGER.cut[k] = stoi(value);
             }
           }
+        } 
+        // If individual channel TH is given, read in the thresh hold multiplicity
+        if(strcmp(subkey.c_str(), "CHANNEL_TH") == 0 && THRESHOLD_MULTIPLICY == -1 ){
+          TH_MULTIPLICITY.push_back(stod(value));
         } 
         // Read the channel mapping (mapping from hardware to software channel)
         subkey = key.substr(0, (int)key.size()-2);
@@ -4165,6 +4903,7 @@ bool read_config(const char *file){
     CALIB.MA_energy[i] /= CALIB.RAW_energy[i];
     CALIB.MWD_energy[i] /= CALIB.RAW_energy[i];
     CALIB.TMAX_energy[i] /= CALIB.RAW_energy[i];
+    CALIB.NMO_energy[i] /= CALIB.RAW_energy[i];
   }
   // Some tests for the read configuration parameters
   // Test if the dimension of the calibration parameters fit the number of channels, etc.
@@ -4182,6 +4921,10 @@ bool read_config(const char *file){
   }
   if ( (int)CALIB.TMAX_energy.size() < CHANNELS ){
     printf("ERROR (read_config): Not every TMAX filter channel has its energy calibration factor!\n");
+    return(false);
+  }
+  if ( (int)CALIB.NMO_energy.size() < CHANNELS ){
+    printf("ERROR (read_config): Not every NMO filter channel has its energy calibration factor!\n");
     return(false);
   }
   if ( (int)CALIB.multis.size() < CHANNELS ){
@@ -4230,7 +4973,7 @@ void print_detector_config(){
 }
 
 // Searches string if character is present
-bool is_in_string(char *character, char const *letter){
+bool is_in_string(char const *character, char const *letter){
   // convert char to str
   string str(character);
   // look for character
@@ -4281,7 +5024,7 @@ bool is_saturation(signal_struct &signal, int n){
 	int rising_left = 0;
 	int rising_right = n;
 	int rising_start = 80; // powerful, but use carefully
-	double sat_threshold = 3500;
+	double sat_threshold = 10000;
 	// Search for the rising edge crossing the kth % of the maximum
 	for (int i = 0; i < ENERGY_WINDOW_MAX; i++){
 		if ( signal.trace[i] > fraction * max) {
@@ -4416,4 +5159,240 @@ double signal_integral(signal_struct &signal, int debug = 0){
   if (debug == 1) printf("%d %3.1f %d\n", signal.energy_n, signal.energy, right - left);
 	if ( right - left > 0 ) return(integral);
 	else { return(0.0); }
+}
+
+// Polynomial of nth degree, dimension given by par.size()
+double polnx(double x, vector<double> &par){
+  // Dimension
+  int n = (int)par.size();
+  // Return value
+  double f = 0;
+  // Execute sum of polynomials
+  for (int i = 0; i < n; i++){
+    f += par[i] * pow(x, i);
+  }
+  // Return f
+  return(f);
+}
+
+// Logarithm with 3 parameters
+double log3x(double x, vector<double> &par){
+  // Dimension
+  if ((int)par.size() != 3){
+    printf("WARNING(log3x): Wrong amount of parameters passed (size: %d, must be 3!\n", (int)par.size());
+    return(0);
+  } 
+  // Return value
+  double f = par[0] - par[1] * log(x+par[2]);
+  // Return f
+  return(f);
+}
+
+// Exponential Growth
+double ExpGro1(double x, vector<double> &par){
+  // Dimension
+  if ((int)par.size() != 3){
+    printf("WARNING(ExpGro1): Wrong amount of parameters passed (size: %d, must be 3!\n", (int)par.size());
+    return(0);
+  } 
+  // Return value
+  double f = par[0] * exp( x / par[1] ) + par[2];
+  // Return f
+  return(f);
+}
+
+// Exponential Decay with undershoot compensation
+double ExpDecay1(double x, vector<double> &par){
+  // Dimension
+  if ((int)par.size() != 5){
+    printf("WARNING(ExpGro1): Wrong amount of parameters passed (size: %d, must be 55!\n", (int)par.size());
+    return(0);
+  } 
+  // Return value
+  double f = par[0] * exp( - x / par[1] ) + par[2] + par[3] * x + par[4] * pow(x, 2);
+  // Return f
+  return(f);
+}
+
+// Fit function for pixel saturation
+Double_t SIPMpixel(Double_t *x, Double_t *par){
+  // Parameter carriers
+  // par[0]: corresponds to total amount of pixels, N_total
+  // x: N of pixels fired 
+  double value = par[0] * ( 1 - exp( - x[0] / par[0] ) );
+  return value;
+}
+
+// Fit function for pixel saturation
+Double_t SIPMlinearize(Double_t x, Double_t A){
+  // Parameter carriers
+  // par[0]: corresponds to total amount of pixels, N_total
+  // x: N of pixels fired 
+  double value = - A * log( 1 - ( x / A ) );
+  return value;
+}
+
+// Energy  and time resolution fit
+Double_t resolution(Double_t *x, Double_t *par){
+  // Parameter carriers
+  // par[0]: A is stochastic shower development parameter
+  // par[1]: B is parameter for electric noice  
+  // par[2]: C is free parameter
+  // par[3]: D is third degree parameter
+  // par[4]: x_0 is pole shift parameter
+  // x: Energy
+  double value = sqrt( (pow(par[0], 2)/(x[0]-par[4])) + (pow(par[1], 2)/pow((x[0]-par[4]),2)) + (pow(par[3], 3)/pow((x[0]-par[4]),3)) + pow(par[2], 2) );
+  return value;
+}
+
+// Smooth array around passed value with smoothing interval given
+vector<double> array_smooth(vector<double> &array, int s, int L){
+  // copy array
+  vector<double> returned = array;
+  // do the smoothing around sample s
+  for (int n = s-L; n < (s+L); n++){
+    // adjust smoothing interval around current sample n to the distance to s
+    // smoothing interval length
+    int length = L;//- (int)( 0.5 *abs(s-n))+ L;
+    int counter = 0;
+    double sum = 0;
+    for (int k = n-length ; k < n+length; k++){
+      sum += array[k];
+      counter++;
+    }
+    sum /= counter;
+    returned[n] = sum;
+  }
+  return(returned);
+}
+
+
+
+vector<double> array_simulate_proto(){
+  //
+  //  Channel 13
+  //
+  int multiplier = 100;
+  int junc1 = 108 * multiplier;
+  int junc2 = 112 * multiplier;
+  int junc3 = 127 * multiplier;
+  // 
+  vector<double> par1;
+  par1.push_back(-10.9343);
+  par1.push_back(0.22214);
+  // 
+  double value;
+  //
+  vector<double> ch12;
+  for (int x = 0; x < junc1; x++){
+    value = (double)(x) / (double)(multiplier);
+    ch12.push_back(polnx(value, par1));
+  }
+  vector<double> par2;
+  par2.push_back(-1308.47);
+  par2.push_back(-1998.47);
+  par2.push_back(-106.078);
+  for (int x = junc1; x < junc2; x++){
+    value = (double)(x) / (double)(multiplier);
+    ch12.push_back(log3x(value, par2));
+  }
+  vector<double> par3;
+  par3.push_back(-953116.94);
+  par3.push_back(23054.8573);
+  par3.push_back(-184.806);
+  par3.push_back(0.49213);
+  for (int x = junc2; x < junc3; x++){
+    value = (double)(x) / (double)(multiplier);
+    ch12.push_back(polnx(value, par3));
+  }
+  vector<double> par4;
+  par4.push_back(31867.61);
+  par4.push_back(-426.061);
+  par4.push_back(1.755);
+  par4.push_back(-0.001);
+  par4.push_back(-8.7766e-6);
+  par4.push_back(1.4731e-8);
+  for (int x = junc3; x < 300*multiplier; x++){
+    value = (double)(x) / (double)(multiplier);
+    ch12.push_back(polnx(value, par4));
+  }
+  //
+  // Smooth out the overlaps
+  ch12 = array_smooth(ch12, junc1, multiplier/1);
+  ch12 = array_smooth(ch12, junc2, multiplier/1);
+  ch12 = array_smooth(ch12, junc3, multiplier/1);
+
+
+  //
+  //  CH07
+  //
+  // multiplier = 100;
+  junc1 = 110 * multiplier;
+  // int junc2 = 112 * multiplier;
+  // int junc3 = 127 * multiplier;
+  // 
+  par1.clear();
+  par1.push_back(2.1488e-112);
+  par1.push_back(0.41476);
+  par1.push_back(-4.13246);
+  // 
+  value = 0.0;
+  //
+  vector<double> ch07;
+  for (int x = 0; x < junc1; x++){
+    value = (double)(x) / (double)(multiplier);
+    ch07.push_back(ExpGro1(value, par1));
+  }
+  par2.clear();
+  par2.push_back(543803.86499);
+  par2.push_back(330.92119);
+  par2.push_back(-520005.51566);
+  par2.push_back(1330.21254);
+  par2.push_back(-1.10282);
+  for (int x = junc1; x < 300*multiplier; x++){
+    value = (double)(x) / (double)(multiplier);
+    ch07.push_back(ExpDecay1(value, par2));
+  }
+  //
+  // Smooth out the overlaps
+  ch07 = array_smooth(ch07, junc1, multiplier/10);
+
+
+  if (proto_out->is_open()){
+    for (int n = 0; n < (int)ch07.size(); n++){
+      *proto_out << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch07[n] << ";" 
+                 << ch07[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n] << ";" 
+                 << ch12[n]; 
+      *proto_out << endl;
+    }
+    proto_out->close();
+  }
+
+  //
+  hfile->cd("JUNK");
+  plot_trace(ch07, "ch07", "AL*");
+  plot_trace(ch12, "ch12", "AL*");
+  return ch12;
 }

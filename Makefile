@@ -34,8 +34,8 @@ endif
 # LDFlags was -O
 
 CXXFLAGS     += $(ROOTCFLAGS)
-LIBS          = $(ROOTLIBS) $(SYSLIBS)-lMathMore -lSpectrum
-GLIBS         = $(ROOTGLIBS) $(SYSLIBS)-lMathMore -lSpectrum
+LIBS          = $(ROOTLIBS) $(SYSLIBS)-lMathMore -lSpectrum -lRooFit -lHtml -lMinuit
+GLIBS         = $(ROOTGLIBS) $(SYSLIBS)-lMathMore -lSpectrum -lRooFit -lHtml -lMinuit
 
 #------------------------------------------------------------------------------
 
