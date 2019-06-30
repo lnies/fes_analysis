@@ -4,14 +4,368 @@ Written by Lukas.Nies@physik.uni-giessen.de
 modified for single board / self triggered readout 
 **************************************/
 
-// aw_lukas specific header
+#include <stdlib.h>
+#include <stdio.h>
+#include <cmath>
+#include <math.h>
+#include <string.h>
+#include "aw_lib.h"
+#include "tagger_lib.h"
+#include <vector>
+#include <fstream>
+#include <cstddef>
+#include <chrono> // measuring high-res execution time 
+#include "Math/Interpolator.h"
+#include "Math/Polynomial.h"
+#include "TROOT.h"
+#include "TMath.h"
+#include "TFile.h"
+#include "TH1.h"
+#include "TH2.h"
+#include "TF1.h"
+#include "TProfile.h"
+#include "TNtuple.h"
+#include "TRandom.h"
+#include "TTree.h"
+#include "TGraph.h"
+#include "TGraphErrors.h"
+#include "TCanvas.h"
+#include "TMultiGraph.h"
+#include "TLegend.h"
+#include "TDirectory.h"
+#include "TStyle.h"
+#include "TList.h"
+#include "TExec.h"
+#include "TText.h"
+#include "TGraphPainter.h"
+#include "TSpectrum.h"  // For spectrum and peak analysis
+#include "TVirtualFitter.h" // fitting
+#include "TPaveStats.h"
+// RooFit Framework
+#include "RooAddPdf.h"
+#include "RooDataSet.h"
+#include "RooPlot.h"
+#include "RooRealVar.h"
+#include "RooDataHist.h"
+#include "TLatex.h"
+#include "RooNovosibirsk.h"
 
-#include "aw_lukas.h"
+using namespace RooFit ;
 
-using namespace RooFit;
 using namespace std;
 using namespace chrono;
 using namespace RooFit;
+
+
+int doof = 0;
+
+
+// global constants
+int TRACELEN = 250;
+int MATRIX_J = 1;
+int MATRIX_K = 2;
+char VERBOSE[200];
+int CHANNELS = 8;
+int TAG_CHANNELS = 16;
+int TAGGER_WINDOW = 100;
+int CENTRAL = 4;
+int BOARDS = 1;
+int CHANNELS_EFF;
+int SAMPLE_t = 10; // Sample frequency in ns
+char MODE[100]; 
+double SAMPLE_t_eff; // Effective sample frequency
+Int_t N_E_WINDOW = 12;
+Int_t E_WINDOW_LEFT = 0; 
+Int_t E_WINDOW_RIGHT = 6000; 
+Int_t E_WINDOW_LENGTH = (int) (E_WINDOW_RIGHT-E_WINDOW_LEFT)/N_E_WINDOW; 
+int COINC_LEVEL = 1; // number of coincidences needed per event
+int BASELINE_CUT = 70;
+int ENERGY_WINDOW_MAX = 100;  
+Int_t N_INTPOL_SAMPLES = 10; // must be even
+Int_t NB = 2;
+Int_t ENERGY_NORM = 2500; // Cosmis peak will be normed to this channel
+int NB_ACT_CHANNELS = 0; // Number of active channels
+double GENERAL_SCALING = 1.; // General histogram scaling for energy calibration
+int EXTRACT_PROTO=1; // Extract proto trace and save it to file
+double LOWER_RATIO = 0.;
+double UPPER_RATIO = 100000.;
+// Multi sampling calibration
+int MULTIS = 1;
+bool MULTIS_CALIB_MODE = false;
+// global settings
+double THRESHOLD_MULTIPLICY= 1;
+bool GLITCH_FILTER = false;
+bool SATURATION_FILTER = false;
+int GLITCH_FILTER_RANGE = 0;
+double CFD_fraction = 0.5;
+int L=5;     // Length of moving average intervals, centered around current value (mus be odd)
+int DELAY=5; // DELAY for the CFD
+int M=5; // Window for MWD
+double TAU=1.; // Impact value for MA part of MWD
+int nTabs = 20; // Number of tabs for the FIR filter
+vector<double> FIR_COEF; // Array for the FIR filter coefficients
+double LIN_COMP = 0.; // Fit Parameter for linearizing the detector energy sum
+// global counters
+unsigned int NOE=0;
+
+ReadSystem_class DETECTOR;
+// Taggerfile_class tagger;	
+
+struct mapping_struct
+{
+  int multis = 1; // multiplication for the multisampling (multisampling)
+  int polarity = +1; // Polarity of the input signal
+  // if multisampling is true, save start and end h_channel
+  int h_channel_start = 0;
+  int h_channel_stop = 0;
+  int s_channel = 0; // software channel address
+  int board_nb = 0; // board number
+};
+
+struct hist_struct_TH1D
+{
+  TF1 *fit;
+  TH1D *hist;
+  vector<Double_t> params;
+};
+
+struct hist_struct_TH2D
+{
+  TF1 *fit;
+  TH2D *hist;
+  vector<Double_t> params;
+};
+
+struct calib_struct
+{
+  vector<double> multis; // calibration for inter sampling mode
+  vector<double> RAW_energy; // calibration between different xtals
+  vector<double> MA_energy; // calibration between different xtals
+  vector<double> MWD_energy; // calibration between different xtals
+  vector<double> TMAX_energy; // calibration between different xtals
+  vector<double> NMO_energy; // calibration between different xtals
+  hist_struct_TH1D h_RAW_energy; // hist the calibration parameters
+  hist_struct_TH1D h_MA_energy;
+  hist_struct_TH1D h_MWD_energy;
+  hist_struct_TH1D h_TMAX_energy;
+  hist_struct_TH1D h_NMO_energy;
+};
+
+struct multis_norm_struct
+{
+  hist_struct_TH1D h_hist;
+  Double_t ratio = 0.;
+  Double_t ratio_err = 0.;
+};
+
+struct time_struct
+{
+  vector<hist_struct_TH1D> h_timing;
+  vector<double> timing; // Is N_E_WINDOWS long when built
+};
+
+struct tagger_energy
+{
+  hist_struct_TH1D h_energy; // General energy tagged histogram
+  hist_struct_TH1D h_energy_m; // Histogram w/o multiples
+  hist_struct_TH1D h_energy_mt; // Histogram w/o multiples and w/ timing cut
+  double energy = 0.0; 
+  double energy_m = 0.0; 
+  double energy_mt = 0.0; 
+  // 
+  hist_struct_TH1D h_integral; // General integral tagged histogram
+  hist_struct_TH1D h_integral_m; // Histogram w/o multiples
+  hist_struct_TH1D h_integral_mt; // Histogram w/o multiples and w/ timing cut
+  double integral = 0.0; 
+  double integral_m = 0.0; 
+  double integral_mt = 0.0; 
+
+};
+
+struct baseline_struct
+{
+  // Container for storing the baseline traces
+  vector<Double_t> trace;
+  // Variables for storing the baseline statistics
+  double mean = 0.;
+  double std = 0.;
+  // Store the thresholds 
+  double TH = 0.;
+  double TH_multiplicity = 0.;
+  hist_struct_TH1D h_mean;
+  hist_struct_TH1D h_std;
+  hist_struct_TH1D h_samples;
+};
+
+struct CFD_struct
+{
+  vector<Double_t> trace; // CFD trace
+  vector<double> x_interpol; //x- interpolated section of the signal zero crossing
+  vector<double> y_interpol; //y- interpolated section of the signal zero crossing
+  double max = 0.;
+  int Xzero = 0; 
+  int Xzero_int = 0; 
+  double int_x0 = 0.; // the important time information
+  double int_b = 0.;
+  double int_m = 0.;
+};
+
+struct signal_struct
+{
+  // Trace is saved 
+  vector<Double_t> trace;
+  // weighted sum of all traces, not to be reset
+  hist_struct_TH2D TH2D_proto_trace;
+  vector<Double_t> proto_trace;
+  vector<Double_t> proto_trace_fit;
+  vector<Double_t> proto_trace_maxbin;
+  vector<hist_struct_TH1D> TH1D_proto_trace;
+  // Baseline is copied and saved separatly here
+  baseline_struct base;
+  // CFD conversion of trace
+  CFD_struct CFD;
+  // Energy of the signal by pulsehight
+  double energy = 0.; 
+  int energy_n = 0; // sample number of peak 
+  // Energy of the signal
+  double integral = 0.; 
+  double ratio = 0.; // ratio of integral/pulseheight
+  // Marker for signal or non-signal
+  int is_signal = 0;
+  // General energy histogram
+  hist_struct_TH1D h_energy;
+  // General integral histogram
+  hist_struct_TH1D h_integral;
+  hist_struct_TH1D h_ratio; // ratio of integral ober pulseheight
+  // Tagged energy histograms and energies
+  vector<tagger_energy> tagged;
+  // Timing content
+  vector<time_struct> time; 
+  // Some information about the harware characteritics of the channel
+  bool is_valid = false; // if this channel is not used for feature extraction, then config file will set this to false
+  int hardware_addr = 0;
+  int clock_speed = 100; // in MHz
+  double sample_t = 10.; // Sampling time in ns
+  int multis = 1; // Multisampling, number of hardware channels per software channel
+  int tracelen = 250; // number of samples in trace
+  int polarity = 1; // Polarity of input signal
+  bool is_raw = false; // Flag for the RAW container
+};
+
+struct tagger_struct
+{
+  double time[16]; // Time information of tagger (arbitrary information)
+  int counts[16]; // Counts per tagger energy
+  int multiples_per_count[16]; // Multiples per counts 
+  int multiples_per_channel[16]; // Multiples per tagger channel
+  vector<hist_struct_TH1D> t_hist; // Histogram for tagger timing distribution
+  hist_struct_TH2D h_tagger_vs_energy; // Tagger time vs energy in ECAL
+  int cut[16]; // Mean tagger time for cutting times off the mean time
+  double energy[16] = {41.3,44.8,51.6,69.14,79.3,99.8,149.37,200.,249.8,350.0,450.2,550.37,650.3,699.7,724.4,725.5}; // Energies corresponding to each tagger channel
+};
+
+
+// Construct containers for storing all wave forms + histograms + various informations 
+vector<signal_struct> RAW;
+vector<signal_struct> RAW_CALIB;
+vector<signal_struct> MA;
+vector<signal_struct> MWD;
+vector<signal_struct> TMAX;
+vector<signal_struct> NMO; // NMO: Nelder-Mead Optimization Algorithm
+//
+vector<signal_struct> ECAL25; // Sum of all channels, only one element in vector
+//
+// Proto trace
+vector<signal_struct> PROTO;
+// Struct to save all multi sampling renormalisation histograms and parameters
+// Dimensions: [eff. channels][MULTIS][MULTIS]
+vector<vector<vector<multis_norm_struct> > > MULTIS_NORM;
+// Build root file
+TFile *hfile;
+// output stream for writing the proto trace
+ofstream *proto_out;
+// Build the calibration struct
+calib_struct CALIB;
+// Build the Mapping struct
+vector<vector<mapping_struct> > MAPPING;
+// Initialize a tagger
+tagger_struct TAGGER;
+// Container for costum multiplicities
+vector<double> TH_MULTIPLICITY;
+
+// Definition of functions
+void extraction();
+void multis_calib();
+void plot_waves(vector<signal_struct> &array, char const *name, char const *modus);
+void plot_waves_compare(char const *name, char const *modus);
+void plot_interpol(vector<double> &x, vector<double> &y);
+void plot_time_energy(time_struct &array);
+void plot_energy_hist(vector<signal_struct> &array, char const *path, const char *mode);
+void plot_tagger_hist(vector<signal_struct> &array, char const *path, const char *mode);
+void plot_timing_hist(vector<signal_struct> &signal, char const *path);
+void plot_multis_hist();
+void plot_TH2D_hist(TH2D *hist, char const *path, const char *name);
+void plot_TH2D_hist_graph(TH2D *hist, vector<double> trace, char const *path, const char *name);
+void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *name);
+void plot_energy_resolution(signal_struct &signal, char const *path, const char *name);
+void plot_trace(vector<double> &trace, char const *name, char const *modus);
+double randit(int ini=0);
+double array_mean(const vector<double> &array, int start, int end);
+double array_std(const vector<double> &array, int start, int end, double mean);
+int array_largest(vector<double> &array, int lower, int upper);
+int array_zero_xing(vector<double> &array, int lower, int upper);
+double array_compare(vector<double> &array1, vector<double> &array2, vector<double> &weigths, vector<double> &par, int start, int end, int debug);
+vector<double> array_adjust(vector<double> &array, vector<double> &x, int debug);
+vector<double> array_sum(vector<double> &array1, vector<double> &array2, double factor);
+vector<double> array_simulate_proto();
+vector<double> array_smooth(vector<double> &array, int s, int L);
+void interpolate(vector<signal_struct> &signal);
+void time_compare(vector<signal_struct> &signal);
+vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
+vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
+void print_usage();
+void build_structure();
+void print_final_statistics();
+void print_energy_statistics(vector<signal_struct> &array, const char *name);
+void print_energy_calib();
+void print_timing_statistics(time_struct &array, Int_t total_coincidents, const char *name);
+void print_stat_multis_calib();
+void init_intersamp_hist(int channels);
+void init_signal(vector<signal_struct> &signal, int channels, bool is_raw = false);
+void init_times(vector<vector<time_struct> > &array, int channels);
+void reset_signal(vector<signal_struct> &signal);
+void reset_times(vector<vector<time_struct> > &array);
+void init_multis_norm(vector<vector<vector<multis_norm_struct> > > &array, int channels);
+void fill_hists();
+void init_hists(int channels);
+bool read_file(string file);
+bool read_config(char const *file);
+bool linreg(vector<double> &x, vector<double> &y, double *m, double *b);
+// Double_t fpeaks(Double_t *x, Double_t *par);
+Double_t langaufun(Double_t *x, Double_t *par);
+TF1 *langaufit(TH1 *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent);
+Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM);
+Int_t largest_1Dbin(TH1D *hist, Int_t lower, Int_t upper);
+vector<double> FIR_filter(vector<double> &trace, double calib);
+vector<double> MA_filter(vector<double> &trace, double calib);
+vector<double> MWD_filter(vector<double> &trace, double calib);
+vector<double> CFD(vector<double> &trace, double multiplier);
+void print_detector_config();
+bool is_in_string(char const *character, char const *letter);
+bool is_glitch(vector<double> &trace, double TH, int n);
+bool is_saturation(signal_struct &signal, int n);
+bool baseline_weird(signal_struct &signal);
+int is_valid_max(signal_struct &signal, int n);
+double signal_integral(signal_struct &signal, int debug);
+double polnx(double x, vector<double> &par);
+double log3x(double x, vector<double> &par);
+double ExpDecay1(double x, vector<double> &par);
+double ExpGro1(double x, vector<double> &par);
+Double_t SIPMpixel(Double_t *x, Double_t *par);
+Double_t SIPMlinearize(Double_t x, Double_t A);
+Double_t resolution(Double_t *x, Double_t *par);
+
+#include "simplex.h"
 
   
 int main(int argc, char *argv[])
