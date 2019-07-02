@@ -268,6 +268,7 @@ int main(int argc, char *argv[])
   // Save costum threshold multiplicies
   if (TH_MULTIPLICITY.size() != RAW_CALIB.size() && THRESHOLD_MULTIPLICY == -1){
     printf("ERROR: Check your costum threshold multiplicies from the ini file!\n");
+    printf("TH_MULTIPLICITY.size()=%d, RAW_CALIB.size()=%d\n", (int)TH_MULTIPLICITY.size(), (int)RAW_CALIB.size());
     return(-1);
   }
   if (THRESHOLD_MULTIPLICY == -1){
@@ -552,6 +553,7 @@ void extraction(){
 	  TMAX[i].trace.clear();
 	  MA[i].trace = MA_filter(RAW_CALIB[i].trace, CALIB.MA_energy[i]);
 	  MWD[i].trace = MWD_filter(RAW_CALIB[i].trace, CALIB.MWD_energy[i]);
+    // if (i == 7) printf("%3.3f\n", CALIB.TMAX_energy[i]);
 	  TMAX[i].trace = FIR_filter(RAW_CALIB[i].trace, CALIB.TMAX_energy[i]);
     for (int n = 0; n < (int)TMAX[i].trace.size(); n++){
       // printf("%3.1f %3.1f %3.1f\n", RAW_CALIB[i].trace[n], TMAX[i].trace[n], CALIB.TMAX_energy[i] );
@@ -823,6 +825,10 @@ void extraction(){
       for (int a = 0; a < (int)MAPPING.size(); a++){
         // Chrystal channel (Channel of matrix)
         int ch = b*(int)MAPPING.size()+a; 
+        if (RAW_CALIB[7].is_signal == 1) {
+          plot = 1;
+          // printf("%3.3f %3.3f %3.3f\n", RAW_CALIB[7].energy, RAW_CALIB[7].base.TH, RAW_CALIB[7].base.std);
+        }
         // Check if there was a signal in channel ch
         if (RAW_CALIB[ch].is_signal == 1 && RAW_CALIB[ch].is_valid == 1){
           column++;
@@ -869,16 +875,6 @@ void extraction(){
       }
     }
   } 
-  if (plot == true){
-    printf("PLOTTED\n");
-    hfile->cd("JUNK/");
-    plot_waves_compare("PLOT1", "TRACE");
-  }
-  if (plot == 2){
-    hfile->cd("JUNK/");
-    plot_waves_compare("PLOT2", "TRACE");
-  }
-
   //
   //
   if(strcmp(MODE, "BEAM") == 0) {
@@ -1025,19 +1021,10 @@ void extraction(){
           ECAL25[3].tagged[k].integral_mt += TMAX[i].tagged[k].integral_mt;
           ECAL25[4].tagged[k].integral_mt += NMO[i].tagged[k].integral_mt;
 
-          // if  (k == 0 && 
-          //     (NOE % 10) == 0 &&
-          //     i == 0 
-          //   ){
-          //   doof++;
-          //   hfile->cd("JUNK");
-          //   plot_waves_compare("k0", "TRACE");
-          //   printf("CANDIDATE: %d\n", doof);
-          //   for (int t = 0; t < N_E_WINDOW; t ++){ 
-          //     printf("%3.1f ", TAGGER.time[t]);
-          //   }
-          //   printf("\n\n");
-          // }
+          if (i == CENTRAL && k == 0 && TMAX[i].tagged[k].energy_mt < 5000){
+            plot = 1;
+          }
+
         }
         else{
           RAW_CALIB[i].tagged[k].energy_mt = 0.0;
@@ -1128,6 +1115,24 @@ void extraction(){
     }
 
   } 
+
+  if (plot == true){
+    printf("PLOTTED\n");
+    hfile->cd("JUNK/");
+    plot_waves_compare("PLOT1", "TRACE");
+    // for (int i = 0; i < (int)RAW_CALIB[7].trace.size(); i++){
+    //   printf("%3.3f\n", RAW_CALIB[7].trace[i]);
+    // }
+    // printf("\n");
+  }
+  if (plot == 2){
+    hfile->cd("JUNK/");
+    plot_waves_compare("PLOT2", "TRACE");
+  }
+
+
+
+
   // Now print wave forms
   // print coincident waveforms
   if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true) || // either Cosmics mode or
@@ -1592,6 +1597,15 @@ void print_final_statistics(){
         printf("TAGGER_CUT%02d=%i#\n", k, largest_1Dbin(TAGGER.t_hist[k].hist,-5000,5000));  
       }
     }
+    // Calculate the energy hist of the ring around the central crystal
+    for (int k = 0; k < (int)ECAL25[4].tagged.size(); k++){
+      for (int i = 0; i < (int)NMO.size(); i++){
+        if ( i == CENTRAL ) continue;
+        ECAL25[3].tagged[k].h_energy_mt_ring.hist->Add(TMAX[i].tagged[k].h_energy_mt.hist);
+      }
+    }
+
+
     // Print the split screen tagger energy histograms
     plot_tagger_hist(RAW_CALIB, "ENERGY/TAGGER/PULSE_HIGHT/RAW_CALIB", "pulseheight");
     plot_tagger_hist(MA, "ENERGY/TAGGER/PULSE_HIGHT/MA", "pulseheight");
@@ -3389,6 +3403,10 @@ void init_hists(int channels){
           ECAL25[i].tagged[k].h_energy_mt.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
           ECAL25[i].tagged[k].h_energy_mt.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
           ECAL25[i].tagged[k].h_energy_mt.hist->GetYaxis()->SetTitle("Counts");
+          sprintf(name,"TMAX_PH_SUM_TAGGER_MT_RING_%02d", k);
+          ECAL25[i].tagged[k].h_energy_mt_ring.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
+          ECAL25[i].tagged[k].h_energy_mt_ring.hist->GetXaxis()->SetTitle("Energy / MeV (NOT CALIB YET)");
+          ECAL25[i].tagged[k].h_energy_mt_ring.hist->GetYaxis()->SetTitle("Counts");
           hfile->cd("ENERGY/SUM/TAGGER/INTEGRAL/RAW_CALIB");
           sprintf(name,"TMAX_INT_SUM_TAGGER_%02d", k);
           ECAL25[i].tagged[k].h_integral.hist=new TH1D(name,"",bins_integral,0,range_integral);
@@ -3931,11 +3949,11 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     // Setting fit range and start values
     hist->Rebin(nrebin);
     Double_t largest_bin = largest_1Dbin(hist, 2000*GENERAL_SCALING/nrebin)*nrebin*GENERAL_SCALING; // heaviest bin between lower and upper bound
-    printf("%3.1f\n", largest_bin);
+    // printf("%3.1f\n", largest_bin);
     Double_t fr[2]; // fit boundaries
     Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4]; 
     fr[0]=0.75*largest_bin; // Lower fit boundary
-    fr[1]=2.0*largest_bin; // Upper fit boundary
+    fr[1]=4.0*largest_bin; // Upper fit boundary
     //Fit parameters:
     //par[0]=Width (scale) parameter of Landau density
     //par[1]=Most Probable (MP, location) parameter of Landau density
@@ -4545,6 +4563,7 @@ bool read_config(const char *file){
   }
   // Since MA, MWD, and TMAX are calculated from a calibrated RAW trace, the filter calibration vlues
   //    have to be adjusted to the initial calibration to avoid false multiplication of two factors
+
   for (int i = 0; i<(int)CALIB.RAW_energy.size(); i++){
     CALIB.MA_energy[i] /= CALIB.RAW_energy[i];
     CALIB.MWD_energy[i] /= CALIB.RAW_energy[i];
@@ -4638,7 +4657,8 @@ bool is_glitch(vector<double> &trace, double TH, int n){
   for(int k=n; k<n+GLITCH_FILTER_RANGE; k++){
     // If k-th sample is greater than TH, then save 0 in array
     // Test with RAW signal because RAW_CALIB is not yet calculated
-    if ( abs(trace[k]) > TH){
+    if ( trace[k] > TH){ // Either test if above TH or above 0, depending on noise level
+    // if ( trace[k] > 0){
       is_glitch_array[k-n] = 1;
     }
     // If not, then set it save 1 in array

@@ -60,6 +60,7 @@ struct tagger_energy
   hist_struct_TH1D h_energy; // General energy tagged histogram
   hist_struct_TH1D h_energy_m; // Histogram w/o multiples
   hist_struct_TH1D h_energy_mt; // Histogram w/o multiples and w/ timing cut
+  hist_struct_TH1D h_energy_mt_ring; // Histogram w/o multiples and w/ timing cut w/o the central crystal
   double energy = 0.0; 
   double energy_m = 0.0; 
   double energy_mt = 0.0; 
