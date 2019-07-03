@@ -64,7 +64,7 @@ namespace BT{
     ){    
 
     int N=init.size();                         //space dimension
-    const double a=1.0, b=1.0, g=0.5, h=0.5;   //coefficients
+    const double a=2.0, b=2.0, g=0.5, h=0.5;   //coefficients
                                                //a: reflection  -> xr  
                                                //b: expansion   -> xe 
                                                //g: contraction -> xc
