@@ -63,6 +63,8 @@ namespace BT{
        int debug = 1                                 // Debug output
     ){    
 
+    vector<D> result; // Vector for returning the result
+
     int N=init.size();                         //space dimension
     const double a=2.0, b=2.0, g=0.5, h=0.5;   //coefficients
                                                //a: reflection  -> xr  
@@ -101,7 +103,7 @@ namespace BT{
     
     //optimization begins
     for(cnt=0; cnt<iterations; ++cnt){
-
+      if (debug==2) printf("it: %d\n", cnt);
       for(int i=0;i<N+1;++i){
         // subst = array_adjust(proto, x[i], debug);
 	      vf[i]= f(array, proto, weights, x[i], start, end, debug); // x[i][1] is the shift parameter
@@ -200,8 +202,11 @@ namespace BT{
     if(cnt==iterations){//max number of iteration achieves before tol is satisfied
       cout<<"Iteration limit achieves, result may not be optimal"<<endl;
     }
-    if (debug == 2) printf("+++++ %3.3f %3.3f +++++\n", x[x1][0], x[x1][1]);
-    return x[x1];
+    if (debug == 2) printf("+++++ A:%3.3f | m:%3.3f | f:%3.3f +++++\n", x[x1][0], x[x1][1], f(array, proto, weights, x[x1], start, end, debug) );
+ 
+    result.push_back(x[x1][0]); result.push_back(x[x1][1]); result.push_back( f(array, proto, weights, x[x1], start, end, debug) );
+
+    return result;
   }
     
 }//BT::

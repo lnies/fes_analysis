@@ -942,10 +942,10 @@ double array_compare(vector<double> &array1, vector<double> &array2, vector<doub
 vector<double> array_adjust(vector<double> &array, vector<double> &x, int debug){
   // Return array
   vector<double> returned ((int)array.size(), 0.0);
-  debug=0;
   // Parameters:
   double A = x[0]; // Amplitude
   double m = x[1]; // Time shift
+  // x[2] is the error value from array_compare, not being used here
   // for (int i = 0; i < (int)array.size(); i++) returned.push_back(0.0);
   vector<double> dummy ((int)array.size(), 0.0);
   // for (int i = 0; i < (int)array.size(); i++) dummy.push_back(0.0);
@@ -955,8 +955,8 @@ vector<double> array_adjust(vector<double> &array, vector<double> &x, int debug)
     returned.clear();
     return(returned);
   }
-  if ( (int)x.size() != 2 ){
-    if (debug == 1 ) printf("WARNING(array_adjust): Passed parameter array is of wrong dimension (has to be N=2). Return empty array.\n"); 
+  if ( (int)x.size() > 3 ){
+    if (debug == 1 ) printf("WARNING(array_adjust): Passed parameter array is of wrong dimension (has to be N=2 (or 3) ). Return empty array.\n"); 
     returned.clear();
     return(returned);
   }
