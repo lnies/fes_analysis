@@ -50,7 +50,7 @@ using namespace std;
 namespace BT{
 
   template<class D, class OP>
-  vector<D> Simplex(OP f,                       // target function
+  vector<vector<D> > Simplex(OP f,                // target function
        vector<D> &array,                         // Data array to fit
        vector<D> &proto,                         // Proto array to adjust
        vector<D> &weights,                       // Weight array weight smaples
@@ -63,10 +63,11 @@ namespace BT{
        int debug = 1                                 // Debug output
     ){    
 
-    vector<D> result; // Vector for returning the result
-
+    vector<vector<D> > result; // Vector for returning the result
+    vector<D> temp;
+ 
     int N=init.size();                         //space dimension
-    const double a=2.0, b=2.0, g=0.5, h=0.5;   //coefficients
+    const double a=1.0, b=1.0, g=0.5, h=0.5;   //coefficients
                                                //a: reflection  -> xr  
                                                //b: expansion   -> xe 
                                                //g: contraction -> xc
@@ -111,8 +112,9 @@ namespace BT{
 
       }
       
-      x1=0; xn=0; xnp1=0;//find index of max, second max, min of vf.
-      
+      //find index of max, second max, min of vf.
+
+      x1=0; xn=0; xnp1=0;
       for(int i=0;i<(int)vf.size();++i){
       	if(vf[i]<vf[x1]){
       	  x1=i;
@@ -127,6 +129,7 @@ namespace BT{
       for(int i=0; i<(int)vf.size();++i){ 
       	if( vf[i]<vf[xnp1] && vf[i]>vf[xn] ) xn=i;
       }
+
       //x1, xn, xnp1 are found
 
       vector<D> xg(N, 0);//xg: centroid of the N best vertexes
@@ -159,52 +162,64 @@ namespace BT{
       // subst = array_adjust(proto, xr, debug);
       D fxr=f(array, proto, weights, xr, start, end, debug);//record function at xr
       
-      if(vf[x1]<=fxr && fxr<=vf[xn])
-    	copy(xr.begin(), xr.end(), x[xnp1].begin() );
+      if(vf[x1]<=fxr && fxr<=vf[xn]){
+    	 copy(xr.begin(), xr.end(), x[xnp1].begin() );
+      }
           
-          //expansion:
-          else if(fxr<vf[x1]){
-    	vector<D> xe(N,0);
-    	for( int i=0; i<N; ++i)
-    	  xe[i]=xr[i]+b*(xr[i]-xg[i]);
-    	// if( f(xe) < fxr )
-      // subst = array_adjust(proto, xe, debug);
-      if( f(array, proto, weights, xe, start, end, debug) < fxr )
-    	  copy(xe.begin(), xe.end(), x[xnp1].begin() );
-    	else
-    	  copy(xr.begin(), xr.end(), x[xnp1].begin() );
-          }//expansion finished,  xe is not used outside the scope
+      //expansion:
+      else if(fxr<vf[x1]){
+      	vector<D> xe(N,0);
+      	for( int i=0; i<N; ++i)
+      	  xe[i]=xr[i]+b*(xr[i]-xg[i]);
+      	// if( f(xe) < fxr )
+        // subst = array_adjust(proto, xe, debug);
+        if( f(array, proto, weights, xe, start, end, debug) < fxr )
+      	  copy(xe.begin(), xe.end(), x[xnp1].begin() );
+      	else
+      	  copy(xr.begin(), xr.end(), x[xnp1].begin() );
+      }//expansion finished,  xe is not used outside the scope
           
       //contraction:
-          else if( fxr > vf[xn] ){
-    	vector<D> xc(N,0);
-    	for( int i=0; i<N; ++i)
-    	  xc[i]=xg[i]+g*(x[xnp1][i]-xg[i]);
-    	// if( f(xc) < vf[xnp1] )
-      // subst = array_adjust(proto, xc, debug);
-      if( f(array, proto, weights, xc, start, end, debug) < vf[xnp1] )
-    	  copy(xc.begin(), xc.end(), x[xnp1].begin() );
-    	else{
-    	  
-    	  for( int i=0; i<(int)x.size(); ++i ){
-    	    if( i!=x1 ){ 
-    	      for(int j=0; j<N; ++j) 
-    		x[i][j] = x[x1][j] + h * ( x[i][j]-x[x1][j] );
-    	    }
-    	  }
-    	  
-    	}
+      else if( fxr > vf[xn] ){
+      	vector<D> xc(N,0);
+      	for( int i=0; i<N; ++i)
+      	  xc[i]=xg[i]+g*(x[xnp1][i]-xg[i]);
+      	// if( f(xc) < vf[xnp1] )
+        // subst = array_adjust(proto, xc, debug);
+        if( f(array, proto, weights, xc, start, end, debug) < vf[xnp1] )
+      	  copy(xc.begin(), xc.end(), x[xnp1].begin() );
+      	else{
+      	  
+      	  for( int i=0; i<(int)x.size(); ++i ){
+      	    if( i!=x1 ){ 
+      	      for(int j=0; j<N; ++j) 
+      		x[i][j] = x[x1][j] + h * ( x[i][j]-x[x1][j] );
+      	    }
+      	  }
+      	  
+      	}
       }//contraction finished, xc is not used outside the scope
       // subst = array_adjust(proto, x[x1], debug);
       if (debug == 2) printf("%3.5f %3.5f %3.5f\n", x[x1][0], x[x1][1], f(array, proto, weights, x[x1], start, end, debug)); 
+      // Save the progress in return vecotor
+      temp.clear();
+      temp.push_back(x[x1][0]);
+      temp.push_back(x[x1][1]);
+      temp.push_back(f(array, proto, weights, x[x1], start, end, debug));
+      result.push_back(temp);
     }//optimization is finished
 
-    if(cnt==iterations){//max number of iteration achieves before tol is satisfied
+    if(cnt==iterations && debug == 2){//max number of iteration achieves before tol is satisfied
       cout<<"Iteration limit achieves, result may not be optimal"<<endl;
     }
     if (debug == 2) printf("+++++ A:%3.3f | m:%3.3f | f:%3.3f +++++\n", x[x1][0], x[x1][1], f(array, proto, weights, x[x1], start, end, debug) );
  
-    result.push_back(x[x1][0]); result.push_back(x[x1][1]); result.push_back( f(array, proto, weights, x[x1], start, end, debug) );
+    // Save the optimum one last time
+    temp.clear();
+    temp.push_back(x[x1][0]);
+    temp.push_back(x[x1][1]);
+    temp.push_back(f(array, proto, weights, x[x1], start, end, debug));
+    result.push_back(temp);
 
     return result;
   }

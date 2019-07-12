@@ -706,7 +706,7 @@ void extraction(){
 
         vector<double> init; init.push_back(1); init.push_back(0.0);
 
-        double a0[]={+1, -1000}, a1[]={0.5, -2000}, a2[]={ 1.5, 1000.0};
+        double a0[]={0.0, -100.0}, a1[]={1.5, 0.0}, a2[]={ 0.0, 100.0};
         vector<vector<double> > simplex;
         simplex.push_back( vector<double>(a0,a0+2) );
         simplex.push_back( vector<double>(a1,a1+2) );
@@ -718,7 +718,7 @@ void extraction(){
           weights.push_back(1);
         }
         for (int n = 100; n < 120; n++){
-          weights.push_back(1);
+          weights.push_back(10);
         }
         for (int n = 120; n < (int)RAW_CALIB[i].trace.size(); n++){
           weights.push_back(1);
@@ -735,8 +735,8 @@ void extraction(){
         
         // if (i==0) plot = 1;
 
-
-        vector<double> opt;
+        // The whole optimization process is stored, where the last element is the optimium
+        vector<vector<double> > opt;
         // printf("\n%d %d\n", (int)RAW_CALIB[i].trace.size(), (int)RAW_CALIB[i].proto_trace_fit.size());
         int debug = 0;
         // if (i == 1) debug = 2;
@@ -748,13 +748,13 @@ void extraction(){
                       init,
                       (double) 1e-7,
                       simplex,
-                      1E5,
+                      1E2,
                       debug
         );
         // printf("++++++++++\n %3.3f %3.3f\n++++++++++", opt[0], opt[1]);
         // Save optimized wave form in NMO trace
         
-        NMO[i].trace = array_adjust(RAW_CALIB[i].proto_trace_fit, opt, 0);
+        NMO[i].trace = array_adjust(RAW_CALIB[i].proto_trace_fit, opt.back(), 0);
         NMO[i].is_signal = 1;
         NMO[i].is_valid = true;
 
@@ -1047,12 +1047,12 @@ void extraction(){
             // plot = 2;
           }
 
-          if (i==CENTRAL && RAW_CALIB[i].energy > 3000){
-            for (int n = 0; n < (int)RAW_CALIB[i].trace.size(); n++){
-              printf("%3.3f\n", RAW_CALIB[i].trace[n]);
-            }
-          printf("++++++++++++++++++++\n");
-          }
+          // if (i==CENTRAL && RAW_CALIB[i].energy > 3000){
+          //   for (int n = 0; n < (int)RAW_CALIB[i].trace.size(); n++){
+          //     printf("%3.3f\n", RAW_CALIB[i].trace[n]);
+          //   }
+          // printf("++++++++++++++++++++\n");
+          // }
 
 
         }

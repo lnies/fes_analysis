@@ -2985,10 +2985,15 @@ bool baseline_weird(signal_struct &signal){
 		// 1: Glitch detected 
 		// 2: Saturation detected 
 		// 3: Trace is not not above TH
-    // 4: Baseline is wierd
+    // 4: Baseline is weird
+    // 5: Maximum not in energy range
 int is_valid_max(signal_struct &signal, int n){
 	// Test if the current sample is larger than the max energy
   if(signal.trace[n] > signal.base.TH){
+    // maximum must be in the specified energy window
+    if ( ENERGY_WINDOW_MAX < array_largest(signal.trace, 0, (int)signal.trace.size() ) || BASELINE_CUT > array_largest(signal.trace, 0, (int)signal.trace.size() )){
+      return(5); 
+    }
     // If glitch filter and saturation filer are not active
     if (GLITCH_FILTER == false && SATURATION_FILTER == false){
       return(0);
