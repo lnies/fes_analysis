@@ -232,6 +232,9 @@ int main(int argc, char *argv[])
 
   // array_simulate_proto();
 
+  // Recalculate the energy windows
+  E_WINDOW_LENGTH = (E_WINDOW_RIGHT - E_WINDOW_LEFT)/N_E_WINDOW;
+
 
   ////////////////////////////////////////////////////////
   // BUILD HISTOGRAMS / LOAD PROTO TRACES FROM FILE
@@ -548,16 +551,18 @@ void extraction(){
 	  /////////////////////////////////////////////////////
 	  // APPLICATION OF THE FILTER TO RAW_CALIB 
 	  /////////////////////////////////////////////////////
-	  MA[i].trace.clear();
-	  MWD[i].trace.clear();
-	  TMAX[i].trace.clear();
-	  MA[i].trace = MA_filter(RAW_CALIB[i].trace, CALIB.MA_energy[i]);
+	  MA[i].trace.clear(); MA[i].sample_t = RAW_CALIB[i].sample_t; MA[i].multis = RAW_CALIB[i].multis;
+	  MWD[i].trace.clear(); MWD[i].sample_t = RAW_CALIB[i].sample_t; MWD[i].multis = RAW_CALIB[i].multis;
+	  TMAX[i].trace.clear(); TMAX[i].sample_t = RAW_CALIB[i].sample_t; TMAX[i].multis = RAW_CALIB[i].multis;
+	  MA[i].trace = MA_filter(RAW_CALIB[i].trace, CALIB.MA_energy[i], L*MA[i].multis);
 	  MWD[i].trace = MWD_filter(RAW_CALIB[i].trace, CALIB.MWD_energy[i]);
     // if (i == 7) printf("%3.3f\n", CALIB.TMAX_energy[i]);
 	  TMAX[i].trace = FIR_filter(RAW_CALIB[i].trace, CALIB.TMAX_energy[i]);
-    for (int n = 0; n < (int)TMAX[i].trace.size(); n++){
-      // printf("%3.1f %3.1f %3.1f\n", RAW_CALIB[i].trace[n], TMAX[i].trace[n], CALIB.TMAX_energy[i] );
+    for (int n = 0; n < (int)MA[i].trace.size(); n++){
+      // printf("%3.1f\n",RAW_CALIB[i].trace[n] );
+      // printf("%3.1f %3.1f %3.1f\n", RAW_CALIB[i].trace[n], MA[i].trace[n], (double)FIR_COEF.size() );
     }
+    // printf("++++++++++++++++++++++\n");
 
 	  /////////////////////////////////////////////////////
 	  // APPLICATION OF THE CONSTANT FRACTION DISCRIMINATOR 
@@ -566,10 +571,10 @@ void extraction(){
 	  MA[i].CFD.trace.clear();
 	  MWD[i].CFD.trace.clear();
 	  TMAX[i].CFD.trace.clear();
-	  RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace, 1);
-	  MA[i].CFD.trace = CFD(MA[i].trace, 1);
-	  MWD[i].CFD.trace = CFD(MWD[i].trace, 1);
-	  TMAX[i].CFD.trace = CFD(TMAX[i].trace, 1);
+	  RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace, RAW_CALIB[i].multis);
+	  MA[i].CFD.trace = CFD(MA[i].trace, RAW_CALIB[i].multis);
+	  MWD[i].CFD.trace = CFD(MWD[i].trace, RAW_CALIB[i].multis);
+	  TMAX[i].CFD.trace = CFD(TMAX[i].trace, RAW_CALIB[i].multis);
 	}
 
   /////////////////////////////////////////////////////
@@ -595,6 +600,8 @@ void extraction(){
     TMAX[i].base.mean = array_mean(TMAX[i].trace, 0,BASELINE_CUT*TMAX[i].multis);
     TMAX[i].base.std = array_std(TMAX[i].trace, 0, BASELINE_CUT*TMAX[i].multis,TMAX[i].base.mean);
     TMAX[i].base.TH = RAW_CALIB[i].base.TH_multiplicity * TMAX[i].base.std; 
+
+    // printf("%3.3f %3.3f %3.3f %d\n", MA[i].base.mean, MA[i].base.std, MA[i].base.TH, MA[i].multis);
   }
   /////////////////////////////////////////////////////
   // EXTRACT FEATURES FROM TRACES
@@ -603,8 +610,10 @@ void extraction(){
   for(int i=0; i<(int)RAW.size(); i++){
     // Extract the maximum
   	RAW[i].energy = RAW[i].trace[array_largest(RAW[i].trace, BASELINE_CUT, ENERGY_WINDOW_MAX)];
+    RAW[i].energy_n = array_largest(RAW[i].trace, BASELINE_CUT, ENERGY_WINDOW_MAX);
   	// Look for CFD Zero Crossing
-  	RAW[i].CFD.Xzero = array_zero_xing(RAW[i].CFD.trace, BASELINE_CUT, ENERGY_WINDOW_MAX);
+    /// Search for minimum before zero xrossing
+  	RAW[i].CFD.Xzero = array_zero_xing(RAW[i].CFD.trace, ZERO_XING_CUT, RAW[i].energy_n, -1);
     // Already fill the samples into a histogram for baseline noise estimation
     for(int n=0; n < BASELINE_CUT; n++){
       RAW[i].base.h_samples.hist->Fill(RAW[i].trace[n]);   
@@ -652,7 +661,10 @@ void extraction(){
     RAW_CALIB[i].energy = RAW_CALIB[i].trace[RAW_CALIB[i].energy_n];
     RAW_CALIB[i].integral = signal_integral(RAW_CALIB[i], 0);
     RAW_CALIB[i].ratio = RAW_CALIB[i].integral / RAW_CALIB[i].energy;
+    RAW_CALIB[i].CFD.Xzero = array_zero_xing(RAW_CALIB[i].CFD.trace, ZERO_XING_CUT*RAW_CALIB[i].multis, array_largest(RAW_CALIB[i].CFD.trace, 0, 1E5), -1);
     // printf("%3.1f %3.1f %d\n", RAW_CALIB[i].energy, RAW_CALIB[i].base.TH, RAW_CALIB[i].energy_n);
+
+    // printf("%d %3.3f %3.3f %3.3f %d\n", RAW_CALIB[i].energy_n, RAW_CALIB[i].energy, RAW_CALIB[i].integral, RAW_CALIB[i].ratio, is_valid_max( RAW_CALIB[i], RAW_CALIB[i].energy_n ));
 
     // Search for maximum and check if valid
     if ( is_valid_max( RAW_CALIB[i], RAW_CALIB[i].energy_n ) == 0 && central_healty == 1 ){ // The maximum is valid
@@ -667,11 +679,14 @@ void extraction(){
       //
     	// Only look for the filter traces if raw trace is not a glitch
       MA[i].energy_n = array_largest(MA[i].trace, left, right);
+      // printf("%3.3f %d %d\n", MA[i].base.TH, MA[i].energy_n, is_valid_max( MA[i], MA[i].energy_n ));
+      // printf("%d %3.3f %d\n", MA[i].energy_n, MA[i].energy, is_valid_max( MA[i], MA[i].energy_n ));
       if ( is_valid_max( MA[i], MA[i].energy_n ) == 0 ){
         MA[i].energy = MA[i].trace[MA[i].energy_n];
         MA[i].integral = signal_integral(MA[i], 0);
         MA[i].ratio = MA[i].integral / MA[i].energy;
         MA[i].is_signal = 1;
+        MA[i].CFD.Xzero = array_zero_xing(MA[i].CFD.trace, ZERO_XING_CUT*MA[i].multis, array_largest(MA[i].CFD.trace, 0, 1E5), -1);
       }
       else{ MA[i].energy = 0; MA[i].integral = 0; MA[i].ratio = 0; MA[i].is_signal = 0;}
       //
@@ -681,17 +696,24 @@ void extraction(){
         MWD[i].integral = signal_integral(MWD[i], 0);
         MWD[i].ratio = MWD[i].integral / MWD[i].energy;
         MWD[i].is_signal = 1;
+        MWD[i].CFD.Xzero = array_zero_xing(MWD[i].CFD.trace, ZERO_XING_CUT*MWD[i].multis, array_largest(MWD[i].CFD.trace, 0, 1E5), -1);
+
       }
       else{ MWD[i].energy = 0; MWD[i].integral = 0; MWD[i].ratio = 0; MWD[i].is_signal = 0;}
       //
       TMAX[i].energy_n = array_largest(TMAX[i].trace, left, right);
+      // printf("%d %d\n", TMAX[i].energy_n, (int)TMAX[i].trace.size());
       if ( is_valid_max( TMAX[i], TMAX[i].energy_n ) == 0 ){
         TMAX[i].energy = TMAX[i].trace[TMAX[i].energy_n];
         TMAX[i].integral = signal_integral(TMAX[i], 0);
         TMAX[i].ratio = TMAX[i].integral / TMAX[i].energy;
         TMAX[i].is_signal = 1;
+        TMAX[i].CFD.Xzero = array_zero_xing(TMAX[i].CFD.trace, ZERO_XING_CUT*TMAX[i].multis, array_largest(TMAX[i].CFD.trace, 0, 1E5), -1);
+
       }
       else{ TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;}
+      // printf("%d %d %d %d \n", RAW_CALIB[i].CFD.Xzero, MA[i].CFD.Xzero, MWD[i].CFD.Xzero, TMAX[i].CFD.Xzero );
+
       // For the sake of computational efficiency, only do the Nelder-Mead optimization for signal events
 
       // If the proto traces are already extracted, do the optimization
@@ -767,6 +789,8 @@ void extraction(){
         NMO[i].energy = NMO[i].trace[NMO[i].energy_n];
         NMO[i].integral = signal_integral(NMO[i], 0);
         NMO[i].ratio = NMO[i].integral / NMO[i].energy;
+        NMO[i].CFD.Xzero = array_zero_xing(NMO[i].CFD.trace, BASELINE_CUT*NMO[i].multis, array_largest(NMO[i].CFD.trace, 0, 1E5), -1);
+
 
         // if (i == CENTRAL ) plot = 1;
 
@@ -801,18 +825,18 @@ void extraction(){
 
     // Calculate the CFD traces
     RAW_CALIB[i].CFD.trace.clear();
-    RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace, 1);
+    RAW_CALIB[i].CFD.trace = CFD(RAW_CALIB[i].trace, RAW_CALIB[i].multis);
     MA[i].CFD.trace.clear();
-    MA[i].CFD.trace = CFD(MA[i].trace, 1);
+    MA[i].CFD.trace = CFD(MA[i].trace, MA[i].multis);
     MWD[i].CFD.trace.clear();
-    MWD[i].CFD.trace = CFD(MWD[i].trace, 1);
+    MWD[i].CFD.trace = CFD(MWD[i].trace, MWD[i].multis);
     TMAX[i].CFD.trace.clear();
-    TMAX[i].CFD.trace = CFD(TMAX[i].trace, 1);
+    TMAX[i].CFD.trace = CFD(TMAX[i].trace, TMAX[i].multis);
     // Calculate the multiplication adjustment to the higher res NMO trace
     double multiplier = (double)(NMO[i].trace.size() / RAW_CALIB[i].trace.size());
     //
     NMO[i].CFD.trace.clear();
-    NMO[i].CFD.trace = CFD(NMO[i].trace, multiplier);
+    NMO[i].CFD.trace = CFD(NMO[i].trace, NMO[i].multis*multiplier);
   
 
     // if ( RAW_CALIB[i].ratio == 0 ){
@@ -831,6 +855,11 @@ void extraction(){
   /////////////////////////////////////////////////////
   // Check for coincidences according to the analysis mode
   // + Column cut: only look for coincident events in stacked crystals
+
+  // for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+  //   printf("%d ", RAW_CALIB[i].is_signal);
+  // }
+  // printf("\n");
 
   // Column cut / cosmics mode:
   bool is_coinc = false;
@@ -882,15 +911,15 @@ void extraction(){
       else{
         // start the interpolation by looping over all channels
         // interpolate is searching for the zero crossing point of the CFD signals
-        // interpolate(RAW_CALIB);
-        // interpolate(MA);
-        // interpolate(MWD);
-        // interpolate(TMAX);
-        // // And now compare the timing
-        // time_compare(RAW_CALIB);
-        // time_compare(MA);
-        // time_compare(MWD);
-        // time_compare(TMAX);
+        interpolate(RAW_CALIB);
+        interpolate(MA);
+        interpolate(MWD);
+        interpolate(TMAX);
+        // And now compare the timing
+        time_compare(RAW_CALIB);
+        time_compare(MA);
+        time_compare(MWD);
+        time_compare(TMAX);
       }
     }
   } 
@@ -1149,7 +1178,7 @@ void extraction(){
       // Calculate the zero crossings
       for (int i = 0; i < (int)NMO.size(); i++){
         if (NMO[i].is_signal == 1){
-          NMO[i].CFD.int_x0 = array_zero_xing(NMO[i].CFD.trace,9000, 12000);
+          NMO[i].CFD.int_x0 = array_zero_xing(NMO[i].CFD.trace,9000, 12000, 1);
           // printf("%3.3f\n", NMO[i].CFD.int_x0);
         } 
       }
@@ -1221,11 +1250,19 @@ void extraction(){
       hfile->cd("WAVE_FORMS/CFD/NMO");
       plot_waves(NMO, "CFD_NMO", "CFD");
 
-      // if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true ) && ((int)MAPPING.size() > 1) ){
-      //   // The interpolation
-      //   hfile->cd("WAVE_FORMS/CFD/MA/INTERPOL");
-      //   plot_interpol(MA[0].CFD.x_interpol, MA[0].CFD.y_interpol);
-      // }
+      if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true ) && ((int)MAPPING.size() > 1) ){
+        // The interpolation
+        hfile->cd("WAVE_FORMS/CFD/RAW_CALIB/INTERPOL");
+        plot_interpol(RAW_CALIB[0].CFD.x_interpol, RAW_CALIB[0].CFD.y_interpol);
+        hfile->cd("WAVE_FORMS/CFD/MA/INTERPOL");
+        plot_interpol(MA[0].CFD.x_interpol, MA[0].CFD.y_interpol);
+        hfile->cd("WAVE_FORMS/CFD/MWD/INTERPOL");
+        plot_interpol(MWD[0].CFD.x_interpol, MWD[0].CFD.y_interpol);
+        hfile->cd("WAVE_FORMS/CFD/TMAX/INTERPOL");
+        plot_interpol(TMAX[0].CFD.x_interpol, TMAX[0].CFD.y_interpol);
+        hfile->cd("WAVE_FORMS/CFD/NMO/INTERPOL");
+        plot_interpol(NMO[0].CFD.x_interpol, NMO[0].CFD.y_interpol);
+      }
     }
   }
 } 
@@ -1470,6 +1507,9 @@ void interpolate(vector<signal_struct> &signal)
     }
     // Save the timing information of the zero crossing point
     signal[i].CFD.int_x0 = - (signal[i].CFD.int_b/signal[i].CFD.int_m);
+
+    // signal[i].CFD.int_x0 = signal[i].CFD.x_interpol[array_zero_xing(signal[i].CFD.y_interpol, 0, 1E5, -1)];
+    // printf("%3.3f\n", signal[i].CFD.int_x0);
   }
 }
 
@@ -1568,37 +1608,37 @@ void print_final_statistics(){
 
     //////// TIMING (if there is more than one channel)
 
-    // if (CHANNELS_EFF > 1){
-    //   // Start extracting information for all windows
-    //   // Do the fitting for the histograms and plotting
-    //   plot_timing_hist(RAW_CALIB, "TIMING/RAW_CALIB");
-    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (RAW_CALIB)\n");
-    //   plot_timing_hist(MA, "TIMING/MA");
-    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MA)\n");
-    //   plot_timing_hist(MWD, "TIMING/MWD");
-    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MWD)\n");
-    //   plot_timing_hist(TMAX, "TIMING/TMAX");
-    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (TMAX)\n");
+    if (CHANNELS_EFF > 1){
+      // Start extracting information for all windows
+      // Do the fitting for the histograms and plotting
+      plot_timing_hist(RAW_CALIB, "TIMING/RAW_CALIB");
+      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (RAW_CALIB)\n");
+      plot_timing_hist(MA, "TIMING/MA");
+      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MA)\n");
+      plot_timing_hist(MWD, "TIMING/MWD");
+      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MWD)\n");
+      plot_timing_hist(TMAX, "TIMING/TMAX");
+      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (TMAX)\n");
 
-    //   // Plot the time vs energy graph
-    //   hfile->cd("TIMING/RAW_CALIB");
-    //   plot_time_energy(RAW_CALIB[0].time[1]);
-    //   hfile->cd("TIMING/MA");
-    //   plot_time_energy(MA[0].time[1]); 
-    //   hfile->cd("TIMING/MWD");
-    //   plot_time_energy(MWD[0].time[1]); 
-    //   hfile->cd("TIMING/TMAX");
-    //   plot_time_energy(TMAX[0].time[1]); 
+      // Plot the time vs energy graph
+      hfile->cd("TIMING/RAW_CALIB");
+      plot_time_energy(RAW_CALIB[0].time[1]);
+      hfile->cd("TIMING/MA");
+      plot_time_energy(MA[0].time[1]); 
+      hfile->cd("TIMING/MWD");
+      plot_time_energy(MWD[0].time[1]); 
+      hfile->cd("TIMING/TMAX");
+      plot_time_energy(TMAX[0].time[1]); 
 
 
-    //   // Print out the timing for a filter type
-    //   if (is_in_string(VERBOSE,"t")){
-    //     print_timing_statistics(RAW_CALIB[0].time[1], total_coincidents, "RAW_CALIB");
-    //     print_timing_statistics(MA[0].time[1], total_coincidents, "MA");
-    //     print_timing_statistics(MWD[0].time[1], total_coincidents, "MWD");
-    //     print_timing_statistics(TMAX[0].time[1], total_coincidents, "TMAX");
-    //   }
-    // }
+      // Print out the timing for a filter type
+      if (is_in_string(VERBOSE,"t")){
+        print_timing_statistics(RAW_CALIB[0].time[1], total_coincidents, "RAW_CALIB");
+        print_timing_statistics(MA[0].time[1], total_coincidents, "MA");
+        print_timing_statistics(MWD[0].time[1], total_coincidents, "MWD");
+        print_timing_statistics(TMAX[0].time[1], total_coincidents, "TMAX");
+      }
+    }
   }
   //
   //  PULSER MODE STATISTICS  
@@ -1673,68 +1713,6 @@ void print_final_statistics(){
     plot_tagger_hist(TMAX, "ENERGY/TAGGER/INTEGRAL/TMAX", "integral");
     plot_tagger_hist(NMO, "ENERGY/TAGGER/INTEGRAL/NMO", "integral");
 
-    // Extract TRACELEN 1D hists out of the 2D hist
-    char name[100];
-    if (EXTRACT_PROTO == 1){
-      for (int i = 0; i < (int)RAW_CALIB.size(); i++){
-        sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
-        hfile->cd(name);
-        double largest = 0;
-        int min = 0;
-        int max = 0;
-        int nbins = 0;
-        for (int n = 1; n <= (int)RAW_CALIB[i].trace.size(); n++){
-          sprintf(name, "SLICE%2d", n);
-          RAW_CALIB[i].TH1D_proto_trace[n].hist = RAW_CALIB[i].TH2D_proto_trace.hist->ProjectionY(name, n,n);
-          RAW_CALIB[i].TH1D_proto_trace[n].hist->Rebin(10);
-          // Search for the largest bin
-          largest = largest_1Dbin( RAW_CALIB[i].TH1D_proto_trace[n].hist, -5000, 10000);
-          // Recalculate bin to normal grid
-          min = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetXaxis()->GetXmin();
-          max = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetXaxis()->GetXmax();
-          nbins = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetSize()-2;
-          largest = min + ((max+abs(min))/nbins * largest);
-          RAW_CALIB[i].proto_trace_maxbin.push_back(largest);
-          // Fit gauss aroundthe largest value
-          if ( 110 < n && n < 130) RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+300,0);
-          else RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+100,0);
-          RAW_CALIB[i].proto_trace_fit.push_back(RAW_CALIB[i].TH1D_proto_trace[n].params[2]);
-        }
-        plot_trace(RAW_CALIB[i].proto_trace, "PROTO_TRACE", "AL*");
-        plot_trace(RAW_CALIB[i].proto_trace_maxbin, "PROTO_TRACE_MAXBIN", "AL*");
-        plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
-
-        sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
-        plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_maxbin, name, "PROTO_TRACE_2D_MAXBIN");
-        plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_fit, name, "PROTO_TRACE_2D_FIT");
-        // adjust trace for baseline offset
-        double mean = array_mean(RAW_CALIB[i].proto_trace_fit, 0, BASELINE_CUT);
-        for (int n = 0; n < (int)RAW_CALIB[i].proto_trace_fit.size(); n++ ){
-          RAW_CALIB[i].proto_trace_fit[n] -= mean;  
-        }
-        plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT_ADJUSTED", "AL*");
-      }
-      // Extract proto trace to text file for later reading 
-      if (proto_out->is_open()){
-        for (int n = 0; n < (int)RAW_CALIB[0].proto_trace_fit.size(); n++){
-          for (int i = 0; i < (int)RAW_CALIB.size(); i++){
-            *proto_out << RAW_CALIB[i].proto_trace_fit[n] << ";"; 
-          }
-          *proto_out << endl;
-        }
-        proto_out->close();
-      }
-      else printf("WARNING(statistics): Unable to write proto trace file.\n");
-
-    }
-    if (EXTRACT_PROTO == 0){
-      for (int i = 0; i < (int)RAW_CALIB.size(); i++){
-        RAW_CALIB[i].proto_trace_fit = PROTO[i].proto_trace_fit;
-        plot_trace(PROTO[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
-        sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
-        plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, PROTO[i].proto_trace_fit,name, "PROTO_TRACE_2D_FIT");
-      }
-    }
     /// Fit for the energy sum
     /// 
     for (int i = 0; i < (int)ECAL25.size(); i++){
@@ -1764,6 +1742,70 @@ void print_final_statistics(){
     hfile->cd("ENERGY/TAGGER/");
     plot_trace(tagger_frequencies, "Tagger Frequency", "AB");
   }
+
+  // Extract TRACELEN 1D hists out of the 2D hist
+  char name[100];
+  if (EXTRACT_PROTO == 1){
+    for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      hfile->cd(name);
+      double largest = 0;
+      int min = 0;
+      int max = 0;
+      int nbins = 0;
+      for (int n = 1; n <= (int)RAW_CALIB[i].trace.size(); n++){
+        sprintf(name, "SLICE%2d", n);
+        RAW_CALIB[i].TH1D_proto_trace[n].hist = RAW_CALIB[i].TH2D_proto_trace.hist->ProjectionY(name, n,n);
+        RAW_CALIB[i].TH1D_proto_trace[n].hist->Rebin(1);
+        // Search for the largest bin
+        largest = largest_1Dbin( RAW_CALIB[i].TH1D_proto_trace[n].hist, -5000, 10000);
+        // Recalculate bin to normal grid
+        min = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetXaxis()->GetXmin();
+        max = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetXaxis()->GetXmax();
+        nbins = RAW_CALIB[i].TH1D_proto_trace[n].hist->GetSize()-2;
+        largest = min + ((max+abs(min))/nbins * largest);
+        RAW_CALIB[i].proto_trace_maxbin.push_back(largest);
+        // Fit gauss aroundthe largest value
+        if ( 110 < n && n < 130) RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+300,0);
+        else RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+100,0);
+        RAW_CALIB[i].proto_trace_fit.push_back(RAW_CALIB[i].TH1D_proto_trace[n].params[2]);
+      }
+      plot_trace(RAW_CALIB[i].proto_trace, "PROTO_TRACE", "AL*");
+      plot_trace(RAW_CALIB[i].proto_trace_maxbin, "PROTO_TRACE_MAXBIN", "AL*");
+      plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
+
+      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_maxbin, name, "PROTO_TRACE_2D_MAXBIN");
+      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_fit, name, "PROTO_TRACE_2D_FIT");
+      // adjust trace for baseline offset
+      double mean = array_mean(RAW_CALIB[i].proto_trace_fit, 0, BASELINE_CUT);
+      for (int n = 0; n < (int)RAW_CALIB[i].proto_trace_fit.size(); n++ ){
+        RAW_CALIB[i].proto_trace_fit[n] -= mean;  
+      }
+      plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT_ADJUSTED", "AL*");
+    }
+    // Extract proto trace to text file for later reading 
+    if (proto_out->is_open()){
+      for (int n = 0; n < (int)RAW_CALIB[0].proto_trace_fit.size(); n++){
+        for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+          *proto_out << RAW_CALIB[i].proto_trace_fit[n] << ";"; 
+        }
+        *proto_out << endl;
+      }
+      proto_out->close();
+    }
+    else printf("WARNING(statistics): Unable to write proto trace file.\n");
+
+  }
+  if (EXTRACT_PROTO == 0){
+    for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+      RAW_CALIB[i].proto_trace_fit = PROTO[i].proto_trace_fit;
+      plot_trace(PROTO[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
+      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, PROTO[i].proto_trace_fit,name, "PROTO_TRACE_2D_FIT");
+    }
+  }
+
 
   //
 

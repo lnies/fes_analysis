@@ -24,6 +24,7 @@ Int_t E_WINDOW_RIGHT = 6000;
 Int_t E_WINDOW_LENGTH = (int) (E_WINDOW_RIGHT-E_WINDOW_LEFT)/N_E_WINDOW; 
 int COINC_LEVEL = 1; // number of coincidences needed per event
 int BASELINE_CUT = 70;
+int ZERO_XING_CUT=70;
 int ENERGY_WINDOW_MAX = 100;  
 Int_t N_INTPOL_SAMPLES = 10; // must be even
 Int_t NB = 2;

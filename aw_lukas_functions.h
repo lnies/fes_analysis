@@ -53,7 +53,7 @@ bool linreg(vector<double> &x, vector<double> &y, double *m, double *b);
 double array_mean(const vector<double> &array, int start, int end);
 double array_std(const vector<double> &array, int start, int end, double mean);
 int array_largest(vector<double> &array, int lower, int upper);
-int array_zero_xing(vector<double> &array, int lower, int upper);
+int array_zero_xing(vector<double> &array, int lower, int upper, int direction = 1);
 double array_compare(vector<double> &array1, vector<double> &array2, vector<double> &weigths, vector<double> &par, int start, int end, int debug);
 vector<double> array_adjust(vector<double> &array, vector<double> &x, int debug);
 vector<double> array_sum(vector<double> &array1, vector<double> &array2, double factor);
@@ -63,7 +63,7 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
 vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
 Int_t largest_1Dbin(TH1D *hist, Int_t lower, Int_t upper);
 vector<double> FIR_filter(vector<double> &trace, double calib);
-vector<double> MA_filter(vector<double> &trace, double calib);
+vector<double> MA_filter(vector<double> &trace, double calib, int window);
 vector<double> MWD_filter(vector<double> &trace, double calib);
 vector<double> CFD(vector<double> &trace, double multiplier);
 
@@ -291,7 +291,11 @@ void plot_waves_compare(char const *name, char const *modus) {
 
 
 void plot_time_energy(time_struct &array) {
-  TCanvas *c_waves = new TCanvas("c1","Wave_forms",200,10,500,300);
+  TCanvas *c_waves = new TCanvas("c1","Wave_forms",10,10,1024,1024);
+	gPad->SetGridx();
+  gPad->SetGridy();
+  gStyle->SetOptFit(1111);
+  gStyle->SetLabelSize(0.05,"X");
   c_waves->SetGrid();
   TGraphErrors *tg_waves;
   TLegend* legend = new TLegend(0.7,0.7,0.9,0.9);
@@ -300,7 +304,7 @@ void plot_time_energy(time_struct &array) {
   double e_step = (E_WINDOW_RIGHT - E_WINDOW_LEFT)/N_E_WINDOW/100; // channels calculated to 100ch=1MeV
   Double_t wave_x[N_E_WINDOW];
   for(Int_t k = 0; k<N_E_WINDOW; k++){
-    wave_x[k] = e_step + k*e_step;
+    wave_x[k] = E_WINDOW_LEFT/100 + k*e_step;
   }
   Double_t wave_y[N_E_WINDOW];
   for(Int_t k = 0; k<N_E_WINDOW; k++){
@@ -316,18 +320,43 @@ void plot_time_energy(time_struct &array) {
     wave_yerr[k] = array.h_timing[k].params[5];
   }
   tg_waves = new TGraphErrors(N_E_WINDOW,wave_x,wave_y,0,wave_yerr);
-  tg_waves->GetXaxis()->SetTitle("Energy [MeV]");
-  tg_waves->GetYaxis()->SetTitle("Time resolution [ns]");
-  tg_waves->SetLineColor(1);
-  tg_waves->SetMarkerColor(2);
+
+  // tg_waves->RemovePoint(0); 
+  // tg_waves->RemovePoint(0); 
+  // tg_waves->RemovePoint(0); 
+
+  tg_waves->SetName("data_graph");
+  
+  tg_waves->SetLineColor(kBlack);
+  // tg_waves->SetMarkerColor(i+1);
+  tg_waves->SetMarkerColor(kBlack);
+  tg_waves->SetMarkerStyle(20);
+  tg_waves->SetMarkerSize(3);
   tg_waves->SetLineWidth(2);
+
+  gROOT->SetStyle("Plain");
+  gStyle->SetOptFit(1111);
+
+  c_waves->SetTickx();
+  c_waves->SetTicky();
+
+
+  tg_waves->GetXaxis()->SetTitle("Energy [MeV]");
+  tg_waves->GetYaxis()->SetTitle("Time resolution #sigma [ns]");
   tg_waves->SetTitle("Time resolution for different energy ranges");  
-  legend->AddEntry(tg_waves,"Ch1/Ch2","f");
-  tg_waves->Draw("AL*");
-  legend->Draw();
+
+  tg_waves->Draw("ap");
+
+  vector<Double_t> fit_params;
+
+  fit_params = fit_graph_err(tg_waves, "resolution", 20, 30, 0);
+
+
+
   gPad->Modified();
   gPad->Update();
-  c_waves->Write("Signal_RAW");
+  c_waves->Write("Time_Resolution");
+
   delete c_waves;
 }
 
@@ -864,16 +893,29 @@ vector<double> array_sum(vector<double> &array1, vector<double> &array2, double 
 }
 
 // Looks for the first zero crossing between lower and upper of an array, returns index right to the xing
-int array_zero_xing(vector<double> &array, int lower, int upper){
+int array_zero_xing(vector<double> &array, int lower, int upper, int direction){
 	// Check boundaries
 	if (lower < 0) lower = 0;
 	if (upper > (int)array.size()) upper = (int)array.size(); 
-	// Loop over all indices
-	for (int n = lower; n < upper; n++){
-		//
-	    if ( array[n-1] < 0 && array[n] > 0 ){
-	    	return(n);
-	    }
+	// For Forward direction:
+	if ( direction > 0 ){
+		// Loop over all indices
+		for (int n = lower; n < upper; n++){
+			//
+		    if ( array[n-1] < 0 && array[n] > 0 ){
+		    	return(n);
+		    }
+		}
+	}
+	// For Revers direction:
+	if ( direction < 0 ){
+		// Loop over all indices
+		for (int n = upper; n > lower; n--){
+			//
+		    if ( array[n-1] < 0 && array[n] > 0 ){
+		    	return(n);
+		    }
+		}
 	}
 	// if no xing is found, return 0
 	return(0);
@@ -1010,8 +1052,17 @@ void init_signal(vector<signal_struct> &signal, int channels, bool is_raw){
   for(int i=0; i<channels; i++){
     // for each channel, add a channel item
     signal.push_back( signal_struct() );
+  	// Get mapping 
+  	for (int a = 0; a<(int)MAPPING.size(); a++){
+	    for (int b = 0; b<(int)MAPPING[a].size(); b++){
+	      // Chrystal channel (Channel of matrix)
+	      int ch = b*(int)MAPPING.size()+a; 
+	      // if ch == i check the multiplicity
+	      if (i == ch) signal[i].multis = MAPPING[a][b].multis;
+	  }
+	}
     // Initialize the proto trace with 0s
-    for ( int n = 0; n < TRACELEN; n++) {
+    for ( int n = 0; n < TRACELEN*signal[i].multis; n++) {
       signal[i].proto_trace.push_back(0.0); 
       signal[i].TH1D_proto_trace.push_back( hist_struct_TH1D() );
     }
@@ -1170,7 +1221,7 @@ void init_hists(int channels){
       hfile->cd(name);
       sprintf(name,"PROTO_TRACE%02d",i);
       RAW_CALIB[i].TH2D_proto_trace.hist=new TH2D(name,"",
-                      300,0,300, // x-dimension
+                      TRACELEN*RAW_CALIB[i].multis,0,TRACELEN*RAW_CALIB[i].multis, // x-dimension
                       1000,-5000,10000); // y-dimension
 
       // Timing
@@ -2065,7 +2116,7 @@ Int_t largest_1Dbin(TH1D *hist, Int_t lower = 0, Int_t upper = 100000){
   Int_t largest_bin = 0;
   // Int_t xmin = hist->GetXaxis()->GetXmin(); // Xmin of histogram
   // Int_t xmax = hist->GetXaxis()->GetXmax(); // Xmin of histogram
-  for (Int_t i = 0; i < (upper+abs(lower)); i++){
+  for (Int_t i = abs(lower); i < (upper+abs(lower)); i++){
     if (largest < hist->GetBinContent(i)){ 
       largest_bin = i ; // Norm it to the hist range
       largest = hist->GetBinContent(i);
@@ -2174,12 +2225,15 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     int errors = 0;
     // Setting fit range and start values
     hist->Rebin(nrebin);
-    Double_t largest_bin = largest_1Dbin(hist, 2000*GENERAL_SCALING/nrebin)*nrebin*GENERAL_SCALING; // heaviest bin between lower and upper bound
+    Double_t divide = hist->GetXaxis()->GetXmax() / hist->GetNbinsX();
+    Double_t largest_bin = largest_1Dbin(hist, 2000*GENERAL_SCALING/divide, 80000*GENERAL_SCALING/nrebin)*divide*GENERAL_SCALING; // heaviest bin between lower and upper bound
     // printf("%3.1f\n", largest_bin);
     Double_t fr[2]; // fit boundaries
     Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4]; 
     fr[0]=0.75*largest_bin; // Lower fit boundary
     fr[1]=4.0*largest_bin; // Upper fit boundary
+    printf("%3.3f %3.3f %3.3f %3.3f\n", largest_bin, fr[0], fr[1], divide);
+
     //Fit parameters:
     //par[0]=Width (scale) parameter of Landau density
     //par[1]=Most Probable (MP, location) parameter of Landau density
@@ -2189,9 +2243,9 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     //par[5]=m from A/(x^(m))
     //ADDED LATER: par[6]= Maximum of convoluted function
     //ADDED LATER: par[7]= FWHM of convoluted function
-    pllo[0]=1.      ; pllo[1]=0.               ; pllo[2]=1.0          ; pllo[3]=1.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
-    plhi[0]=20000.   ; plhi[1]=largest_bin+20000.; plhi[2]=10000000000.0; plhi[3]=10000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
-    sv[0]  =100.    ; sv[1]  =largest_bin      ; sv[2]  =5000000.0    ; sv[3]  =1000.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
+    pllo[0]=10.      ; pllo[1]=0.               ; pllo[2]=1.0          ; pllo[3]=1.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
+    plhi[0]=20000.   ; plhi[1]=largest_bin+20000.; plhi[2]=1000000000000.0; plhi[3]=10000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
+    sv[0]  =200.    ; sv[1]  =largest_bin      ; sv[2]  =5000000.0    ; sv[3]  =1000.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
     Double_t chisqr; // Chi squared
     Int_t ndf; // # degrees of freedom
     bool silent = true;
@@ -2263,9 +2317,9 @@ vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t l
     n = 5;
     //
     double par_start[n+1], par_low[n+1], par_up[n+1];
-    par_low[0] = 0.001; par_start[0] = 430; par_up[0] = 1000;
-    par_low[1] = 0.001; par_start[1] = 2200; par_up[1] = 50000;
-    par_low[2] = 1; par_start[2] = 15; par_up[2] = 50;
+    par_low[0] = 0.00001; par_start[0] = 430; par_up[0] = 1000;
+    par_low[1] = 0.00001; par_start[1] = 2200; par_up[1] = 50000;
+    par_low[2] = 0.00001; par_start[2] = 15; par_up[2] = 50;
     par_low[3] = 0.001; par_start[3] = 1000; par_up[3] = 50000;
     par_low[4] = 0.01; par_start[4] = 1; par_up[4] = 25;
     //
@@ -2350,25 +2404,27 @@ vector<double> FIR_filter(vector<double> &trace, double calib){
 }
 
 // Moving average Filter
-vector<double> MA_filter(vector<double> &trace, double calib){
+vector<double> MA_filter(vector<double> &trace, double calib, int window){
   // Return array
   vector<double> filtered;
+  // Check if window is odd
+  if ((window % 2) == 0) window += 1;
   double value = 0;
   // For each sample of the trac do:
 	for(int n=0; n < (int)trace.size(); n++){
 		value = 0;
 		// Take care of boundary conditions
 		// Left boundary
-	  if( n - ((L-1)/2) < 1 ){
-	    value = array_mean(trace, 0, n + (L-1)/2);
+	  if( n - ((window-1)/2) < 1 ){
+	    value = array_mean(trace, 0, n + (window-1)/2);
 	  } 
 	  // Center values
-	  if( n - ((L-1)/2) >= 1 && n + ((L-1)/2) <= (int)trace.size() ){ 
-	    value = array_mean(trace, n - ((L-1)/2), n + ((L-1)/2));
+	  if( n - ((window-1)/2) >= 1 && n + ((window-1)/2) <= (int)trace.size() ){ 
+	    value = array_mean(trace, n - ((window-1)/2), n + ((window-1)/2));
 	  }
 	  // Right boundary
-	  if( n + ((L-1)/2) > (int)trace.size() ){ 
-	    value = array_mean(trace, n - ((L-1)/2), (int)trace.size());
+	  if( n + ((window-1)/2) > (int)trace.size() ){ 
+	    value = array_mean(trace, n - ((window-1)/2), (int)trace.size());
 	  }
 	  // Calibration
 	  value *= calib;
@@ -2564,6 +2620,7 @@ void build_structure(){
   hfile->mkdir("WAVE_FORMS/CFD");
   hfile->mkdir("WAVE_FORMS/CFD/RAW");
   hfile->mkdir("WAVE_FORMS/CFD/RAW_CALIB");
+  hfile->mkdir("WAVE_FORMS/CFD/RAW_CALIB/INTERPOL");
   hfile->mkdir("WAVE_FORMS/CFD/MA");
   hfile->mkdir("WAVE_FORMS/CFD/MA/INTERPOL");
   hfile->mkdir("WAVE_FORMS/CFD/MWD");
@@ -2653,6 +2710,7 @@ bool read_config(const char *file){
         if(strcmp(key.c_str(), "E_WINDOW_LEFT") == 0) E_WINDOW_LEFT = stoi(value);
         if(strcmp(key.c_str(), "E_WINDOW_RIGHT") == 0) E_WINDOW_RIGHT = stoi(value);
         if(strcmp(key.c_str(), "BASELINE_CUT") == 0) BASELINE_CUT = stoi(value);
+        if(strcmp(key.c_str(), "ZERO_XING_CUT") == 0) ZERO_XING_CUT = stoi(value);
         if(strcmp(key.c_str(), "ENERGY_WINDOW_MAX") == 0) ENERGY_WINDOW_MAX = stoi(value);
         if(strcmp(key.c_str(), "ENERGY_NORM") == 0) ENERGY_NORM = stoi(value);
         if(strcmp(key.c_str(), "N_INTPOL_SAMPLES") == 0) N_INTPOL_SAMPLES = stoi(value);
@@ -2991,7 +3049,7 @@ int is_valid_max(signal_struct &signal, int n){
 	// Test if the current sample is larger than the max energy
   if(signal.trace[n] > signal.base.TH){
     // maximum must be in the specified energy window
-    if ( ENERGY_WINDOW_MAX < array_largest(signal.trace, 0, (int)signal.trace.size() ) || BASELINE_CUT > array_largest(signal.trace, 0, (int)signal.trace.size() )){
+    if ( ENERGY_WINDOW_MAX*signal.multis < signal.energy_n || BASELINE_CUT*signal.multis > signal.energy_n ){
       return(5); 
     }
     // If glitch filter and saturation filer are not active
@@ -3019,7 +3077,7 @@ int is_valid_max(signal_struct &signal, int n){
       if (baseline_weird(signal)){
         return(4);
       }
-    	return(0);
+      return(0);
     }
   }
   return(3);
