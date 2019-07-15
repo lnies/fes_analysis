@@ -1448,8 +1448,8 @@ void interpolate(vector<signal_struct> &signal)
     // Reset the Xzero marker for both xtals
     signal[i].CFD.Xzero_int=0;
     // Now set the interpolation interval 
-    Int_t int_left = signal[i].CFD.Xzero - N_INTPOL_SAMPLES/2;
-    Int_t int_right = signal[i].CFD.Xzero + N_INTPOL_SAMPLES/2;
+    Int_t int_left = signal[i].CFD.Xzero - round((N_INTPOL_SAMPLES*signal[i].multis)/2);
+    Int_t int_right = signal[i].CFD.Xzero + round((N_INTPOL_SAMPLES*signal[i].multis)/2);
     // Check if interval is out of range
     if (int_left < 0) int_left = 0;
     if (int_right > (int)signal[i].CFD.trace.size()) int_right = (int)signal[i].CFD.trace.size();
@@ -1469,14 +1469,14 @@ void interpolate(vector<signal_struct> &signal)
     }
     // Set the Data
     inter.SetData(int_range, xi, yi);
-    // printf("%i %i\n", int_left, int_right);
+    // printf("%i %i %i\n", int_left, int_right, int_range);
     // Be careful with the range switching from one grid to the other
-    for ( Int_t k = 0; k < (Int_t)(NB * int_range - NB + 1); k++ )
+    for ( Int_t k = 0; k < (Int_t)((NB) * int_range - (NB) + 1); k++ )
     {
-      Double_t x_value = (Double_t) int_left + (Double_t) k/NB;
+      Double_t x_value = ((Double_t) int_left + (Double_t) k/(NB));
       signal[i].CFD.x_interpol.push_back(x_value);
-      // printf("%f\n", tempx[k]);
       signal[i].CFD.y_interpol.push_back( (Double_t) inter.Eval(x_value));
+      // printf("%3.3f %3.3f\n", signal[i].CFD.x_interpol[k], signal[i].CFD.y_interpol[k]);
       // Already look for the zero crossing point
       if (signal[i].CFD.y_interpol[k] > 0 && signal[i].CFD.Xzero_int==0){signal[i].CFD.Xzero_int=k;}
     }
@@ -1491,7 +1491,7 @@ void interpolate(vector<signal_struct> &signal)
     // signal[j].CFD.int_x0 = - (signal[j].CFD.int_b/signal[j].CFD.int_m);
 
     // Remove some interpolated samples close to the boundaries where the interpolation fails
-    for (int k = 0; k < NB; k++){
+    for (int k = 0; k < (NB); k++){
       signal[i].CFD.x_interpol.erase(signal[i].CFD.x_interpol.begin()); signal[i].CFD.x_interpol.erase(signal[i].CFD.x_interpol.end()-1);
       signal[i].CFD.y_interpol.erase(signal[i].CFD.y_interpol.begin()); signal[i].CFD.y_interpol.erase(signal[i].CFD.y_interpol.end()-1);
     }

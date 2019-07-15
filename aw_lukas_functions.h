@@ -362,6 +362,7 @@ void plot_time_energy(time_struct &array) {
 
 void plot_interpol(vector<double> &x, vector<double> &y){
   TCanvas *c_waves = new TCanvas("c1","Wave_interpolation",200,10,500,300);
+  TMarker *xing; 
   c_waves->SetGrid();
   TMultiGraph *mg_waves = new TMultiGraph();
   mg_waves->SetTitle("Interpolation exaple; Time [ns]; interpol. ADC channel [arb. unit]");
@@ -386,10 +387,12 @@ void plot_interpol(vector<double> &x, vector<double> &y){
   Double_t wave_x[x.size()];
   Double_t wave_y[y.size()];
   Double_t fit_y[y.size()];
+  vector<double> fit_y_vector;
   for(Int_t n = 0; n<(Int_t)x.size(); n++){
-    wave_x[n] = (Double_t) x[n] * SAMPLE_t_eff; // Calibrate to the sampling rate
+    wave_x[n] = (Double_t) x[n]; // Calibrate to the sampling rate
     wave_y[n] = (Double_t) y[n];
     fit_y[n] = (Double_t) m * x[n] + b; // linear fit for wave
+    fit_y_vector.push_back( (Double_t) m * x[n] + b ); // linear fit for wave
   }
   // Build TGraph
   tg_waves = new TGraph(x.size(),wave_x,wave_y);
@@ -418,7 +421,15 @@ void plot_interpol(vector<double> &x, vector<double> &y){
   mg_waves->Add(tg_waves);
   mg_waves->Add(tg_fits);
 
+  double xcrossing = -b/m;
+
+  xing = new TMarker(xcrossing, 0, 1);
+  xing->SetMarkerStyle(5);
+  xing->SetMarkerColor(kRed);
+  xing->SetMarkerSize(3);
+
   mg_waves->Draw("AL");
+  xing->Draw();
   legend->Draw();
   gPad->Modified();
   gPad->Update();

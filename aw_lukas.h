@@ -40,6 +40,7 @@
 #include "TSpectrum.h"  // For spectrum and peak analysis
 #include "TVirtualFitter.h" // fitting
 #include "TPaveStats.h"
+#include "TMarker.h"
 // RooFit Framework
 #include "RooAddPdf.h"
 #include "RooDataSet.h"
