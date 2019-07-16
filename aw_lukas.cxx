@@ -1253,15 +1253,15 @@ void extraction(){
       if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true ) && ((int)MAPPING.size() > 1) ){
         // The interpolation
         hfile->cd("WAVE_FORMS/CFD/RAW_CALIB/INTERPOL");
-        plot_interpol(RAW_CALIB[0].CFD.x_interpol, RAW_CALIB[0].CFD.y_interpol);
+        plot_interpol(RAW_CALIB[0].CFD.x_interpol, RAW_CALIB[0].CFD.y_interpol, RAW_CALIB[0].sample_t);
         hfile->cd("WAVE_FORMS/CFD/MA/INTERPOL");
-        plot_interpol(MA[0].CFD.x_interpol, MA[0].CFD.y_interpol);
+        plot_interpol(MA[0].CFD.x_interpol, MA[0].CFD.y_interpol, MA[0].sample_t);
         hfile->cd("WAVE_FORMS/CFD/MWD/INTERPOL");
-        plot_interpol(MWD[0].CFD.x_interpol, MWD[0].CFD.y_interpol);
+        plot_interpol(MWD[0].CFD.x_interpol, MWD[0].CFD.y_interpol, MWD[0].sample_t);
         hfile->cd("WAVE_FORMS/CFD/TMAX/INTERPOL");
-        plot_interpol(TMAX[0].CFD.x_interpol, TMAX[0].CFD.y_interpol);
+        plot_interpol(TMAX[0].CFD.x_interpol, TMAX[0].CFD.y_interpol, TMAX[0].sample_t);
         hfile->cd("WAVE_FORMS/CFD/NMO/INTERPOL");
-        plot_interpol(NMO[0].CFD.x_interpol, NMO[0].CFD.y_interpol);
+        plot_interpol(NMO[0].CFD.x_interpol, NMO[0].CFD.y_interpol, NMO[0].sample_t);
       }
     }
   }
@@ -1462,14 +1462,14 @@ void interpolate(vector<signal_struct> &signal)
     // Initilaize the interpolator
     ROOT::Math::Interpolator inter(int_range, ROOT::Math::Interpolation::kPOLYNOMIAL);
     // Fill arrays with data
-    for ( Int_t k = int_left; k < int_right; k++)
+    for ( Int_t k = 0; k < int_range; k++)
     {
-      xi[k-int_left]  = (Double_t) k; 
-      yi[k-int_left]  = (Double_t) signal[i].CFD.trace[k];
+      xi[k]  = (Double_t) int_left + k;  
+      yi[k]  = (Double_t) signal[i].CFD.trace[xi[k]];
     }
     // Set the Data
     inter.SetData(int_range, xi, yi);
-    // printf("%i %i %i\n", int_left, int_right, int_range);
+    // printf("%i %i %i %i\n", int_left, int_right, int_range, NB);
     // Be careful with the range switching from one grid to the other
     for ( Int_t k = 0; k < (Int_t)((NB) * int_range - (NB) + 1); k++ )
     {

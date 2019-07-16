@@ -5,7 +5,7 @@
 // Plot functions
 void plot_waves(vector<signal_struct> &array, char const *name, char const *modus);
 void plot_waves_compare(char const *name, char const *modus);
-void plot_interpol(vector<double> &x, vector<double> &y);
+void plot_interpol(vector<double> &x, vector<double> &y, double calib);
 void plot_time_energy(time_struct &array);
 void plot_energy_hist(vector<signal_struct> &array, char const *path, const char *mode);
 void plot_tagger_hist(vector<signal_struct> &array, char const *path, const char *mode);
@@ -222,7 +222,7 @@ void plot_waves_compare(char const *name, char const *modus) {
       }
 
       for (int j = 0; j < 4; j++){
-        if ( j == 1 || j == 2) continue; // dont print MA, MWD
+        if (j == 2 || j == 3 || j == 4) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
       tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
@@ -249,24 +249,27 @@ void plot_waves_compare(char const *name, char const *modus) {
       }
 
       for (int j = 0; j < 4; j++){
-        if ( j == 1 || j == 2) continue; // dont print MA, MWD
+        if (j == 2 || j == 3 || j == 4) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
-      tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
+      tg_combined[5] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
     } 
     else{ printf("ERROR (plot_waves): Plot option invalid\n");}
-    int color = 0;
     for (int j = 0; j < 5; j++){
-    	if (j == 1 || j == 2) continue;
-      if (j==0) color = 1;
-      if (j==3) color = 4;
-      if (j==4) color = 2;
-      tg_combined[j]->SetLineColor(color);
-      tg_combined[j]->SetMarkerColor(color);
+		if (j == 2 || j == 3 || j == 4) continue;
+      if (j==0) {tg_combined[j]->SetLineColor(kBlack); tg_combined[j]->SetMarkerColor(kBlack);}
+      if (j==1) {tg_combined[j]->SetLineColor(kGreen); tg_combined[j]->SetMarkerColor(kGreen);}
+      if (j==2) {tg_combined[j]->SetLineColor(kOrange); tg_combined[j]->SetMarkerColor(kOrange);}
+      if (j==3) {tg_combined[j]->SetLineColor(kBlue); tg_combined[j]->SetMarkerColor(kBlue);}
+      if (j==4) {tg_combined[j]->SetLineColor(kRed); tg_combined[j]->SetMarkerColor(kRed);}      
       tg_combined[j]->SetMarkerSize(0.35);
       tg_combined[j]->SetLineWidth(2);
       char text[100];
-      sprintf(text,"SIGNAL_%i",j);
+      if (j==0) sprintf(text,"RAW_CALIB");
+      if (j==1) sprintf(text,"MA");
+      if (j==2) sprintf(text,"MWD");
+      if (j==3) sprintf(text,"TMAX");
+      if (j==4) sprintf(text,"NMO");
       tg_combined[j]->SetTitle(text);
       legend->AddEntry(tg_combined[j],text,"f");
       mg_combined->Add(tg_combined[j]);
@@ -360,7 +363,7 @@ void plot_time_energy(time_struct &array) {
   delete c_waves;
 }
 
-void plot_interpol(vector<double> &x, vector<double> &y){
+void plot_interpol(vector<double> &x, vector<double> &y, double calib){
   TCanvas *c_waves = new TCanvas("c1","Wave_interpolation",200,10,500,300);
   TMarker *xing; 
   c_waves->SetGrid();
@@ -371,6 +374,10 @@ void plot_interpol(vector<double> &x, vector<double> &y){
   TLegend* legend = new TLegend(0.7,0.7,0.9,0.9);
   int warning_counter = 0;
   legend->SetHeader("Interpolated ADC values"); // option "C" allows to center the header
+  // Calibrate the x-values
+  for (int n = 0; n < (int)x.size(); n++){
+  	x[n] *= calib;
+  }
 
   // Fit the passed waves with a linear regression
   double m = 0; double b = 0;
@@ -389,7 +396,7 @@ void plot_interpol(vector<double> &x, vector<double> &y){
   Double_t fit_y[y.size()];
   vector<double> fit_y_vector;
   for(Int_t n = 0; n<(Int_t)x.size(); n++){
-    wave_x[n] = (Double_t) x[n]; // Calibrate to the sampling rate
+    wave_x[n] = (Double_t) x[n];
     wave_y[n] = (Double_t) y[n];
     fit_y[n] = (Double_t) m * x[n] + b; // linear fit for wave
     fit_y_vector.push_back( (Double_t) m * x[n] + b ); // linear fit for wave
@@ -402,8 +409,8 @@ void plot_interpol(vector<double> &x, vector<double> &y){
   tg_waves->SetTitle("Channel i");
   tg_waves->SetMarkerStyle(kOpenSquare); // Asterisk
   tg_fits = new TGraph(x.size(),wave_x,fit_y);
-  tg_fits->SetLineColor(1);
-  tg_fits->SetMarkerColor(1);
+  tg_fits->SetLineColor(kRed);
+  tg_fits->SetMarkerColor(kRed);
   tg_fits->SetLineWidth(2);
   tg_fits->SetTitle("Channel i");
   tg_fits->SetMarkerStyle(kDot);
