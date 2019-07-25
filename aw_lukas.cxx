@@ -24,6 +24,7 @@ int main(int argc, char *argv[])
   char inputfile[200];
   char outputfile[200];
   char outputfile_proto_trace[200];
+  char outputfile_energy_calib[200];
   char configfile[200];
   unsigned int no_of_events=0, do_no_of_events=0;
   int realign_first_NOE=0;
@@ -226,6 +227,16 @@ int main(int argc, char *argv[])
     proto_out = new ofstream(outputfile_proto_trace);
     if (proto_out->is_open()){
       printf("NOTICE(main): Opened proto trace output file %s.\n", outputfile_proto_trace);
+    }
+    else printf("WARNING(statistics): Unable to write proto trace file.\n");
+  }
+
+  // Open file for saving the energy calibration paramters from cosmics
+  if (strcmp(MODE, "COSMICS")==0){
+    sprintf(outputfile_energy_calib, "%s_energy_calib.txt", outputfile);
+    energy_out = new ofstream(outputfile_energy_calib);
+    if (energy_out->is_open()){
+      printf("NOTICE(main): Opened proto trace output file %s.\n", outputfile_energy_calib);
     }
     else printf("WARNING(statistics): Unable to write proto trace file.\n");
   }
@@ -1583,10 +1594,11 @@ void print_final_statistics(){
       if (RAW_CALIB[i].is_valid == false) continue;
       // fit the energy histograms
       RAW_CALIB[i].h_energy.params = fit_hist(RAW_CALIB[i].h_energy.hist, RAW_CALIB[i].h_energy.fit, "langaus");
-      MA[i].h_energy.params = fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "langaus");
-      MWD[i].h_energy.params = fit_hist(MWD[i].h_energy.hist, MWD[i].h_energy.fit, "langaus");
+      // MA[i].h_energy.params = fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "langaus");
+      // MWD[i].h_energy.params = fit_hist(MWD[i].h_energy.hist, MWD[i].h_energy.fit, "langaus");
       TMAX[i].h_energy.params = fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "langaus");
-      NMO[i].h_energy.params = fit_hist(NMO[i].h_energy.hist, NMO[i].h_energy.fit, "langaus");
+      fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "langaus_roofit");
+      // NMO[i].h_energy.params = fit_hist(NMO[i].h_energy.hist, NMO[i].h_energy.fit, "langaus");
       // Fill the calibration parameters into the histogram
       CALIB.h_RAW_energy.hist->Fill((ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i]);
       // Some runtime information
@@ -1597,11 +1609,11 @@ void print_final_statistics(){
     // Print Energy extraction 
     if (is_in_string(VERBOSE,"e")){
       // Statistics for the fit
-      print_energy_statistics(RAW_CALIB, "RAW_CALIB");
-      print_energy_statistics(MA, "MA");
-      print_energy_statistics(MWD, "MWD");
-      print_energy_statistics(TMAX, "TMAX");
-      print_energy_statistics(NMO, "NMO");
+      // print_energy_statistics(RAW_CALIB, "RAW_CALIB");
+      // print_energy_statistics(MA, "MA");
+      // print_energy_statistics(MWD, "MWD");
+      // print_energy_statistics(TMAX, "TMAX");
+      // print_energy_statistics(NMO, "NMO");
       // Resulting calibration parameters
       print_energy_calib();
     }

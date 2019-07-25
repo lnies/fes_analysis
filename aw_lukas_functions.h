@@ -493,17 +493,21 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path, const char
     gStyle->SetLabelSize(0.05,"X");
     if (strcmp(mode,"pulseheight")==0){
       array[i].h_energy.hist->Rebin(1);
-      array[i].h_energy.hist->SetFillColor(kBlue-7);
-      array[i].h_energy.hist->SetFillStyle(4050);
-      array[i].h_energy.hist->GetXaxis()->SetNdivisions(5);
-      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,10000);
+      // array[i].h_energy.hist->SetFillColor(38);
+      array[i].h_energy.hist->SetFillStyle(1001);
+      array[i].h_integral.hist->SetLineWidth(3);
+      array[i].h_integral.hist->SetLineColor(kBlack);
+      array[i].h_energy.hist->GetXaxis()->SetNdivisions(20);
+      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,20000);
       array[i].h_energy.hist->Draw();
     }
     if (strcmp(mode,"integral")==0){
       array[i].h_integral.hist->Rebin(1);
-      array[i].h_integral.hist->SetFillColor(kBlue-7);
-      array[i].h_integral.hist->SetFillStyle(4050);
-      array[i].h_integral.hist->GetXaxis()->SetNdivisions(5);
+      array[i].h_integral.hist->SetFillColor(38);
+      array[i].h_integral.hist->SetFillStyle(1001);
+      array[i].h_integral.hist->SetLineWidth(3);
+      array[i].h_integral.hist->SetLineColor(kBlack);      
+      array[i].h_integral.hist->GetXaxis()->SetNdivisions(20);
       array[i].h_integral.hist->Draw();
     }
   }
@@ -1078,8 +1082,8 @@ void init_signal(vector<signal_struct> &signal, int channels, bool is_raw){
 	      int ch = b*(int)MAPPING.size()+a; 
 	      // if ch == i check the multiplicity
 	      if (i == ch) signal[i].multis = MAPPING[a][b].multis;
+	    }
 	  }
-	}
     // Initialize the proto trace with 0s
     for ( int n = 0; n < TRACELEN*signal[i].multis; n++) {
       signal[i].proto_trace.push_back(0.0); 
@@ -1102,6 +1106,11 @@ void init_signal(vector<signal_struct> &signal, int channels, bool is_raw){
         signal[i].tagged.push_back(tagger_energy());
       }
     }
+    // In cosmics mode, initialize all energy fit parameters with 0
+    if (strcmp(MODE, "COSMICS") == 0){
+      for (int t = 0; t < 10; t++)
+        signal[i].h_energy.params.push_back(1.0);
+      }
   }
 }
 
@@ -2156,6 +2165,7 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
   if (strcmp(func, "gaus")==0){n = 3;}
   else if (strcmp(func, "multigaus")==0){n = 3;}
   else if (strcmp(func, "langaus")==0){n = 6;}
+  else if (strcmp(func, "langaus_roofit")==0){n = 6;}
   else{ printf("ERROR (fit_hist): Wrong fit function name passed! Currently available: gaus, multigaus, langaus.\n"); }
   // Check if the histograms were filled
   if ( (int) hist->Integral() < 2 ){
@@ -2249,8 +2259,8 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     // printf("%3.1f\n", largest_bin);
     Double_t fr[2]; // fit boundaries
     Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4]; 
-    fr[0]=0.75*largest_bin; // Lower fit boundary
-    fr[1]=4.0*largest_bin; // Upper fit boundary
+    fr[0]=0.65*largest_bin; // Lower fit boundary
+    fr[1]=3.0*largest_bin; // Upper fit boundary
     printf("%3.3f %3.3f %3.3f %3.3f\n", largest_bin, fr[0], fr[1], divide);
 
     //Fit parameters:
@@ -2262,8 +2272,8 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     //par[5]=m from A/(x^(m))
     //ADDED LATER: par[6]= Maximum of convoluted function
     //ADDED LATER: par[7]= FWHM of convoluted function
-    pllo[0]=10.      ; pllo[1]=0.               ; pllo[2]=1.0          ; pllo[3]=1.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
-    plhi[0]=20000.   ; plhi[1]=largest_bin+20000.; plhi[2]=1000000000000.0; plhi[3]=10000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
+    pllo[0]=0.01      ; pllo[1]=0.               ; pllo[2]=1.0          ; pllo[3]=1.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
+    plhi[0]=20000.   ; plhi[1]=largest_bin+20000.; plhi[2]=1e12; plhi[3]=10000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
     sv[0]  =200.    ; sv[1]  =largest_bin      ; sv[2]  =5000000.0    ; sv[3]  =1000.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
     Double_t chisqr; // Chi squared
     Int_t ndf; // # degrees of freedom
@@ -2298,6 +2308,119 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
   //   return(params);
   // }
 
+  // Stable langaus with RooFit 
+  if (strcmp(func, "langaus_roofit")==0){
+    //
+    // Look for the maximum value
+    hfile->cd("JUNK");
+    int nrebin = 1;
+    Double_t divide = hist->GetXaxis()->GetXmax() / hist->GetNbinsX();  
+    Double_t maxBin = largest_1Dbin(hist, 2000*GENERAL_SCALING/divide, 80000*GENERAL_SCALING/nrebin)*divide*GENERAL_SCALING; // heaviest bin between lower and upper bound
+    printf("+++++++++++++++++++ MAXBIN: %3.3f\n", maxBin);
+    Double_t minX = 0.75 * maxBin;
+    Double_t maxX = 3.00 * maxBin;
+    Double_t leftX = 0.75 * maxBin;
+    Double_t rightX = 1.25 * maxBin;
+    //assuming your histogram is the variable "hist".
+    Double_t sigma = (rightX-leftX)/2.35;
+    // Construct observable
+    // RooRealVar t("t","t",minX,maxX);
+    RooRealVar t("t","t",hist->GetXaxis()->GetBinLowEdge(1),hist->GetXaxis()->GetBinUpEdge(hist->GetNbinsX()));
+    // Define fit range
+    t.setRange("ROI_1",minX,maxX);
+    // Construct gauss(t,mg,sg)
+    RooRealVar mg("mg","mg",0) ;
+    RooRealVar sg("sg","sg",sigma,0.1*sigma,5.*sigma) ;
+    RooGaussian gauss("gauss","gauss",t,mg,sg) ;
+
+    // Construct landau(t,ml,sl) ;
+    RooRealVar ml("ml","mean landau",maxBin,maxBin-sigma,maxBin+sigma) ;
+    RooRealVar sl("sl","sigma landau",sigma,0.1*sigma,5.*sigma) ;
+    // RooRealVar sl("sl","sigma landau",0.04,0.,0.2) ;
+    RooLandau landau("lx","lx",t,ml,sl) ;
+
+    // C o n s t r u c t   c o n v o l u t i o n   p d f 
+    // ---------------------------------------
+
+    // Set #bins to be used for FFT sampling
+    t.setBins(5000,"cache") ; 
+
+    // Construct landau (x) gauss
+    RooFFTConvPdf lxg("lxg","landau (X) gauss",t,landau,gauss) ;
+
+    // S a m p l e ,   f i t   a n d   p l o t   c o n v o l u t e d   p d f 
+    // ----------------------------------------------------------------------
+
+    RooDataHist* data = new RooDataHist("dh","dh",t,RooFit::Import(*hist)) ;
+
+    // Fit gxlx to data
+    lxg.fitTo(*data,RooFit::Range("ROI_1"));
+    
+    // Plot data, landau pdf, landau (X) gauss pdf
+    TCanvas *canvas;
+    canvas = new TCanvas("Langaus","Langaus",800,800);
+    RooPlot* frame = t.frame(RooFit::Title((TString)"FitProjection")) ;
+    // data->plotOn(frame) ;
+    RooPlot* fitLine=lxg.plotOn(frame) ;
+
+    lxg.paramOn(frame);
+    data->statOn(frame);
+    landau.plotOn(frame,RooFit::LineStyle(kDashed)) ;
+    // gauss.plotOn(frame,RooFit::LineStyle(kDashed)) ;
+
+    TF1* flxg = lxg.asTF (RooArgList(t)) ;//NOT NORMALIZED
+      
+    Double_t modX=flxg->GetMaximumX();
+    
+    RooCurve* fitCurve = (RooCurve*)fitLine->findObject("lxg_Norm[t]");
+    // RooCurve* fitCurve = (RooCurve*)fitLine->findObject("lxg_Norm[t]_Range[fit_nll_lxg_dh]_NormRange[fit_nll_lxg_dh]");
+    Double_t maxpico=fitCurve?fitCurve->getYAxisMax():0; 
+    Double_t maxpicoU=flxg->Eval(modX);//unnormalized
+    Double_t extrems[2];
+    
+    extrems[0]=flxg->GetX(maxpicoU/2.0,minX,modX);
+    extrems[1]=flxg->GetX(maxpicoU/2.0,modX,maxX);
+
+    printf("%3.3f %3.3f %3.3f %3.3f\n", maxpico, maxpicoU, extrems[0], extrems[1]);
+    
+    // Draw frame on canvas
+    frame->Draw();
+
+    TH1F *clone = (TH1F*)(hist->Clone("clone"));
+    Double_t norm = clone->GetEntries();
+    clone->Scale(1/clone->GetBinContent(maxBin/100));
+    printf("\n\n\n+++++ BINCONTENT: %3.3f\n\n\n\n\n", clone->GetBinContent(maxBin));
+
+    clone->Draw("SAME");
+
+    canvas->Write("RooFit_Langaus");
+  
+    TLine* l;
+    l = new TLine(extrems[0],maxpico/2.0,extrems[1],maxpico/2.0);
+    l->SetLineWidth(1);
+    l->SetLineColor(1);
+    l->Draw("same");
+
+    l = new TLine(extrems[0],hist->GetMinimum(),extrems[1],hist->GetMinimum());
+    l->SetLineWidth(1);
+    l->SetLineColor(1);
+    l->Draw("same");
+    
+    
+    l = new TLine(modX,hist->GetMinimum(),modX,maxpico);
+    l->SetLineWidth(0.5);
+    l->SetLineColor(1);
+    l->Draw("same");
+    l=NULL;
+
+    delete canvas;
+
+
+
+    return(params);
+
+
+  }
 
   // 
   else {return(params);}

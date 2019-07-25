@@ -49,6 +49,19 @@
 #include "RooDataHist.h"
 #include "TLatex.h"
 #include "RooNovosibirsk.h"
+
+#include "RooRealVar.h"
+// #include "RooDataSet.h"
+#include "RooGaussian.h"
+#include "RooLandau.h"
+#include "RooFFTConvPdf.h"
+// #include "RooGenericPdf.h"
+#include "RooPlot.h"
+#include "RooCurve.h"
+#include "RooDataHist.h"
+
+
+
 // aw_lukas specific header
 #include "simplex.h"
 #include "aw_lukas_structs.h"

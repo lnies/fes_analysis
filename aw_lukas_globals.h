@@ -74,6 +74,8 @@ vector<vector<vector<multis_norm_struct> > > MULTIS_NORM;
 TFile *hfile;
 // output stream for writing the proto trace
 ofstream *proto_out;
+// output stream for writing the energy calibration data in cosmics mode
+ofstream *energy_out;
 // Build the calibration struct
 calib_struct CALIB;
 // Build the Mapping struct
