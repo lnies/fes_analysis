@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
   }
   // Save costum threshold multiplicies
   if (TH_MULTIPLICITY.size() != RAW_CALIB.size() && THRESHOLD_MULTIPLICY == -1){
-    printf("ERROR: Check your costum threshold multiplicies from the ini file!\n");
+    printf("ERROR: Check your costum threshold multiplicies from the ini file! Must be exactly one row for every real channel!\n");
     printf("TH_MULTIPLICITY.size()=%d, RAW_CALIB.size()=%d\n", (int)TH_MULTIPLICITY.size(), (int)RAW_CALIB.size());
     return(-1);
   }
@@ -911,15 +911,15 @@ void extraction(){
       else{
         // start the interpolation by looping over all channels
         // interpolate is searching for the zero crossing point of the CFD signals
-        interpolate(RAW_CALIB);
-        interpolate(MA);
-        interpolate(MWD);
-        interpolate(TMAX);
+        // interpolate(RAW_CALIB);
+        // interpolate(MA);
+        // interpolate(MWD);
+        // interpolate(TMAX);
         // And now compare the timing
-        time_compare(RAW_CALIB);
-        time_compare(MA);
-        time_compare(MWD);
-        time_compare(TMAX);
+        // time_compare(RAW_CALIB);
+        // time_compare(MA);
+        // time_compare(MWD);
+        // time_compare(TMAX);
       }
     }
   } 
@@ -1250,19 +1250,19 @@ void extraction(){
       hfile->cd("WAVE_FORMS/CFD/NMO");
       plot_waves(NMO, "CFD_NMO", "CFD");
 
-      if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true ) && ((int)MAPPING.size() > 1) ){
-        // The interpolation
-        hfile->cd("WAVE_FORMS/CFD/RAW_CALIB/INTERPOL");
-        plot_interpol(RAW_CALIB[0].CFD.x_interpol, RAW_CALIB[0].CFD.y_interpol, RAW_CALIB[0].sample_t);
-        hfile->cd("WAVE_FORMS/CFD/MA/INTERPOL");
-        plot_interpol(MA[0].CFD.x_interpol, MA[0].CFD.y_interpol, MA[0].sample_t);
-        hfile->cd("WAVE_FORMS/CFD/MWD/INTERPOL");
-        plot_interpol(MWD[0].CFD.x_interpol, MWD[0].CFD.y_interpol, MWD[0].sample_t);
-        hfile->cd("WAVE_FORMS/CFD/TMAX/INTERPOL");
-        plot_interpol(TMAX[0].CFD.x_interpol, TMAX[0].CFD.y_interpol, TMAX[0].sample_t);
-        hfile->cd("WAVE_FORMS/CFD/NMO/INTERPOL");
-        plot_interpol(NMO[0].CFD.x_interpol, NMO[0].CFD.y_interpol, NMO[0].sample_t);
-      }
+      // if( (strcmp(MODE, "COSMICS") == 0 && is_coinc == true ) && ((int)MAPPING.size() > 1) ){
+      //   // The interpolation
+      //   hfile->cd("WAVE_FORMS/CFD/RAW_CALIB/INTERPOL");
+      //   plot_interpol(RAW_CALIB[0].CFD.x_interpol, RAW_CALIB[0].CFD.y_interpol, RAW_CALIB[0].sample_t);
+      //   hfile->cd("WAVE_FORMS/CFD/MA/INTERPOL");
+      //   plot_interpol(MA[0].CFD.x_interpol, MA[0].CFD.y_interpol, MA[0].sample_t);
+      //   hfile->cd("WAVE_FORMS/CFD/MWD/INTERPOL");
+      //   plot_interpol(MWD[0].CFD.x_interpol, MWD[0].CFD.y_interpol, MWD[0].sample_t);
+      //   hfile->cd("WAVE_FORMS/CFD/TMAX/INTERPOL");
+      //   plot_interpol(TMAX[0].CFD.x_interpol, TMAX[0].CFD.y_interpol, TMAX[0].sample_t);
+      //   hfile->cd("WAVE_FORMS/CFD/NMO/INTERPOL");
+      //   plot_interpol(NMO[0].CFD.x_interpol, NMO[0].CFD.y_interpol, NMO[0].sample_t);
+      // }
     }
   }
 } 
@@ -1608,37 +1608,37 @@ void print_final_statistics(){
 
     //////// TIMING (if there is more than one channel)
 
-    if (CHANNELS_EFF > 1){
-      // Start extracting information for all windows
-      // Do the fitting for the histograms and plotting
-      plot_timing_hist(RAW_CALIB, "TIMING/RAW_CALIB");
-      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (RAW_CALIB)\n");
-      plot_timing_hist(MA, "TIMING/MA");
-      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MA)\n");
-      plot_timing_hist(MWD, "TIMING/MWD");
-      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MWD)\n");
-      plot_timing_hist(TMAX, "TIMING/TMAX");
-      if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (TMAX)\n");
+    // if (CHANNELS_EFF > 1){
+    //   // Start extracting information for all windows
+    //   // Do the fitting for the histograms and plotting
+    //   plot_timing_hist(RAW_CALIB, "TIMING/RAW_CALIB");
+    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (RAW_CALIB)\n");
+    //   plot_timing_hist(MA, "TIMING/MA");
+    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MA)\n");
+    //   plot_timing_hist(MWD, "TIMING/MWD");
+    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (MWD)\n");
+    //   plot_timing_hist(TMAX, "TIMING/TMAX");
+    //   if (is_in_string(VERBOSE,"p")) printf("+ Fitting time hists finished (TMAX)\n");
 
-      // Plot the time vs energy graph
-      hfile->cd("TIMING/RAW_CALIB");
-      plot_time_energy(RAW_CALIB[0].time[1]);
-      hfile->cd("TIMING/MA");
-      plot_time_energy(MA[0].time[1]); 
-      hfile->cd("TIMING/MWD");
-      plot_time_energy(MWD[0].time[1]); 
-      hfile->cd("TIMING/TMAX");
-      plot_time_energy(TMAX[0].time[1]); 
+    //   // Plot the time vs energy graph
+    //   hfile->cd("TIMING/RAW_CALIB");
+    //   plot_time_energy(RAW_CALIB[0].time[1]);
+    //   hfile->cd("TIMING/MA");
+    //   plot_time_energy(MA[0].time[1]); 
+    //   hfile->cd("TIMING/MWD");
+    //   plot_time_energy(MWD[0].time[1]); 
+    //   hfile->cd("TIMING/TMAX");
+    //   plot_time_energy(TMAX[0].time[1]); 
 
 
-      // Print out the timing for a filter type
-      if (is_in_string(VERBOSE,"t")){
-        print_timing_statistics(RAW_CALIB[0].time[1], total_coincidents, "RAW_CALIB");
-        print_timing_statistics(MA[0].time[1], total_coincidents, "MA");
-        print_timing_statistics(MWD[0].time[1], total_coincidents, "MWD");
-        print_timing_statistics(TMAX[0].time[1], total_coincidents, "TMAX");
-      }
-    }
+    //   // Print out the timing for a filter type
+    //   if (is_in_string(VERBOSE,"t")){
+    //     print_timing_statistics(RAW_CALIB[0].time[1], total_coincidents, "RAW_CALIB");
+    //     print_timing_statistics(MA[0].time[1], total_coincidents, "MA");
+    //     print_timing_statistics(MWD[0].time[1], total_coincidents, "MWD");
+    //     print_timing_statistics(TMAX[0].time[1], total_coincidents, "TMAX");
+    //   }
+    // }
   }
   //
   //  PULSER MODE STATISTICS  

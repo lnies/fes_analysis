@@ -496,6 +496,7 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path, const char
       array[i].h_energy.hist->SetFillColor(kBlue-7);
       array[i].h_energy.hist->SetFillStyle(4050);
       array[i].h_energy.hist->GetXaxis()->SetNdivisions(5);
+      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,10000);
       array[i].h_energy.hist->Draw();
     }
     if (strcmp(mode,"integral")==0){
