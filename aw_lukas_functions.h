@@ -252,7 +252,7 @@ void plot_waves_compare(char const *name, char const *modus) {
         if (j == 2 || j == 3 || j == 4) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
-      tg_combined[5] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
+      tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
     } 
     else{ printf("ERROR (plot_waves): Plot option invalid\n");}
     for (int j = 0; j < 5; j++){
