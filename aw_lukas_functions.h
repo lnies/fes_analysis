@@ -491,14 +491,21 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path, const char
     gPad->SetGridy();
     gStyle->SetOptFit(1111);
     gStyle->SetLabelSize(0.05,"X");
+    Char_t FunName[100];
+    sprintf(FunName,"Fitfcn_%s",array[i].h_energy.hist->GetName());
     if (strcmp(mode,"pulseheight")==0){
       array[i].h_energy.hist->Rebin(1);
       // array[i].h_energy.hist->SetFillColor(38);
       array[i].h_energy.hist->SetFillStyle(1001);
-      array[i].h_integral.hist->SetLineWidth(3);
-      array[i].h_integral.hist->SetLineColor(kBlack);
+      array[i].h_energy.hist->SetFillColor(38);
+      array[i].h_energy.hist->SetLineWidth(3);
+      if (array[i].h_energy.hist->GetListOfKeys()->Contains(FunName)){
+        array[i].h_energy.hist->GetFunction(FunName)->SetLineColor(kRed);
+        array[i].h_energy.hist->GetFunction(FunName)->SetLineWidth(3);
+      }
+      array[i].h_energy.hist->SetLineColor(kBlack);
       array[i].h_energy.hist->GetXaxis()->SetNdivisions(20);
-      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,20000);
+      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,7500);
       array[i].h_energy.hist->Draw();
     }
     if (strcmp(mode,"integral")==0){
@@ -1763,7 +1770,19 @@ void init_hists(int channels){
     CALIB.h_RAW_energy.hist = new TH1D(name,"",100,0,10);
     CALIB.h_RAW_energy.hist->GetXaxis()->SetTitle("Calibration factor / arb. units");
     CALIB.h_RAW_energy.hist->GetYaxis()->SetTitle("Counts");
-    CALIB.h_RAW_energy.hist->SetFillColor(kBlue-7);
+    CALIB.h_RAW_energy.hist->SetFillColor(38);
+    CALIB.h_RAW_energy.hist->SetFillStyle(1001);
+    CALIB.h_RAW_energy.hist->SetLineWidth(3);
+    CALIB.h_RAW_energy.hist->SetLineColor(kBlack);
+    hfile->cd("ENERGY/PULSE_HIGHT/TMAX");
+    sprintf(name,"TMAX_PARAMETERS");
+    CALIB.h_TMAX_energy.hist = new TH1D(name,"",100,0,10);
+    CALIB.h_TMAX_energy.hist->GetXaxis()->SetTitle("Calibration factor / arb. units");
+    CALIB.h_TMAX_energy.hist->GetYaxis()->SetTitle("Counts");
+    CALIB.h_TMAX_energy.hist->SetFillColor(38);
+    CALIB.h_TMAX_energy.hist->SetFillStyle(1001);
+    CALIB.h_TMAX_energy.hist->SetLineWidth(3);
+    CALIB.h_TMAX_energy.hist->SetLineColor(kBlack);
   }
 }
 
@@ -2259,7 +2278,7 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     // printf("%3.1f\n", largest_bin);
     Double_t fr[2]; // fit boundaries
     Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4]; 
-    fr[0]=0.65*largest_bin; // Lower fit boundary
+    fr[0]=0.75*largest_bin; // Lower fit boundary
     fr[1]=3.0*largest_bin; // Upper fit boundary
     printf("%3.3f %3.3f %3.3f %3.3f\n", largest_bin, fr[0], fr[1], divide);
 
@@ -2272,9 +2291,9 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     //par[5]=m from A/(x^(m))
     //ADDED LATER: par[6]= Maximum of convoluted function
     //ADDED LATER: par[7]= FWHM of convoluted function
-    pllo[0]=0.01      ; pllo[1]=0.               ; pllo[2]=1.0          ; pllo[3]=1.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
-    plhi[0]=20000.   ; plhi[1]=largest_bin+20000.; plhi[2]=1e12; plhi[3]=10000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
-    sv[0]  =200.    ; sv[1]  =largest_bin      ; sv[2]  =5000000.0    ; sv[3]  =1000.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
+    pllo[0]=100      ; pllo[1]=largest_bin-250.; pllo[2]=1.0; pllo[3]=100.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
+    plhi[0]=1000.   ; plhi[1]=largest_bin+500.; plhi[2]=1e12; plhi[3]=5000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
+    sv[0]  =200.    ; sv[1]  =largest_bin      ; sv[2]  =5e7 ; sv[3]  =500.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
     Double_t chisqr; // Chi squared
     Int_t ndf; // # degrees of freedom
     bool silent = true;
@@ -2389,7 +2408,7 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     TH1F *clone = (TH1F*)(hist->Clone("clone"));
     Double_t norm = clone->GetEntries();
     clone->Scale(1/clone->GetBinContent(maxBin/100));
-    printf("\n\n\n+++++ BINCONTENT: %3.3f\n\n\n\n\n", clone->GetBinContent(maxBin));
+    printf("\n\n\n+++++ BINCONTENT(%d): %3.3f\n\n\n\n\n", clone->GetMaximumBin(), clone->GetBinContent(clone->GetMaximumBin()));
 
     clone->Draw("SAME");
 

@@ -1594,13 +1594,18 @@ void print_final_statistics(){
       if (RAW_CALIB[i].is_valid == false) continue;
       // fit the energy histograms
       RAW_CALIB[i].h_energy.params = fit_hist(RAW_CALIB[i].h_energy.hist, RAW_CALIB[i].h_energy.fit, "langaus");
-      // MA[i].h_energy.params = fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "langaus");
-      // MWD[i].h_energy.params = fit_hist(MWD[i].h_energy.hist, MWD[i].h_energy.fit, "langaus");
+      MA[i].h_energy.params = fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "langaus");
+      MWD[i].h_energy.params = fit_hist(MWD[i].h_energy.hist, MWD[i].h_energy.fit, "langaus");
       TMAX[i].h_energy.params = fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "langaus");
-      fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "langaus_roofit");
+      // fit_hist(TMAX[i].h_energy.hist, TMAX[i].h_energy.fit, "langaus_roofit");
       // NMO[i].h_energy.params = fit_hist(NMO[i].h_energy.hist, NMO[i].h_energy.fit, "langaus");
       // Fill the calibration parameters into the histogram
-      CALIB.h_RAW_energy.hist->Fill((ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i]);
+      if ( RAW_CALIB[i].h_energy.params[8] != 0 ){
+        CALIB.h_RAW_energy.hist->Fill((ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i]);
+      }
+      if ( TMAX[i].h_energy.params[8] != 0 ){
+        CALIB.h_TMAX_energy.hist->Fill((ENERGY_NORM/TMAX[i].h_energy.params[8])*CALIB.TMAX_energy[i]);
+      }
       // Some runtime information
       if (is_in_string(VERBOSE,"p")){
         printf("+ Energy Fit for channel %d done.\n", i);
@@ -1829,14 +1834,14 @@ void print_final_statistics(){
   plot_energy_hist(MA, "ENERGY/PULSE_HIGHT/MA", "pulseheight");
   plot_energy_hist(MWD, "ENERGY/PULSE_HIGHT/MWD", "pulseheight");
   plot_energy_hist(TMAX, "ENERGY/PULSE_HIGHT/TMAX", "pulseheight");
-  plot_energy_hist(NMO, "ENERGY/PULSE_HIGHT/NMO", "pulseheight");
+  // plot_energy_hist(NMO, "ENERGY/PULSE_HIGHT/NMO", "pulseheight");
   //
   // plot_energy_hist(RAW, "ENERGY/INTEGRAL/RAW", "integral");
   plot_energy_hist(RAW_CALIB, "ENERGY/INTEGRAL/RAW_CALIB", "integral");
   plot_energy_hist(MA, "ENERGY/INTEGRAL/MA", "integral");
   plot_energy_hist(MWD, "ENERGY/INTEGRAL/MWD", "integral");
   plot_energy_hist(TMAX, "ENERGY/INTEGRAL/TMAX", "integral");
-  plot_energy_hist(NMO, "ENERGY/INTEGRAL/NMO", "integral");
+  // plot_energy_hist(NMO, "ENERGY/INTEGRAL/NMO", "integral");
   
   printf("+ END OF STATISTICS +\n");
 
