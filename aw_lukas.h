@@ -5,6 +5,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <iomanip>      // std::setprecision
 #include <cmath>
 #include <math.h>
 #include <string.h>
@@ -26,6 +27,8 @@
 #include "TNtuple.h"
 #include "TRandom.h"
 #include "TTree.h"
+#include "TAxis.h"
+#include "TArrayD.h"
 #include "TGraph.h"
 #include "TGraphErrors.h"
 #include "TCanvas.h"

@@ -13,10 +13,10 @@ void plot_timing_hist(vector<signal_struct> &signal, char const *path);
 void plot_multis_hist();
 void plot_TH2D_hist(TH2D *hist, char const *path, const char *name);
 void plot_TH2D_hist_graph(TH2D *hist, vector<double> trace, char const *path, const char *name);
-void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *name);
-void plot_energy_resolution(signal_struct &signal, char const *path, const char *name);
-void plot_trace(vector<double> &trace, char const *name, char const *modus);
-
+void plot_energy_vs_tagged(vector<double> energy, vector<double> error, char const *path, const char *name);
+void plot_energy_resolution(vector<double> sigma, vector<double> sigma_err, char const *path, const char *name);
+void plot_trace(vector<double> &trace, char const *name, char const *path, char const *modus);
+void plot_1D_xy(vector<double> &x, vector<double> &y, char const *name, char const *path, char const *modus);
 // Main "Physics" functions
 void extraction();
 void multis_calib();
@@ -44,8 +44,10 @@ Double_t SIPMpixel(Double_t *x, Double_t *par);
 Double_t SIPMlinearize(Double_t x, Double_t A);
 Double_t resolution(Double_t *x, Double_t *par);
 Double_t langaufun(Double_t *x, Double_t *par);
+Double_t lingaufun(Double_t *x, Double_t *par);
 TF1 *langaufit(TH1 *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent);
-Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM);
+TF1 *lingaufit(TH1 *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent);
+Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM, char const *function);
 bool linreg(vector<double> &x, vector<double> &y, double *m, double *b);
 
 
@@ -60,7 +62,7 @@ vector<double> array_sum(vector<double> &array1, vector<double> &array2, double 
 vector<double> array_simulate_proto();
 vector<double> array_smooth(vector<double> &array, int s, int L);
 vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
-vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t lower = 0, Double_t upper = 1, int verbose = 0);
+vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, char const *options, Double_t lower, Double_t upper, int verbose);
 Int_t largest_1Dbin(TH1D *hist, Int_t lower, Int_t upper);
 vector<double> FIR_filter(vector<double> &trace, double calib);
 vector<double> MA_filter(vector<double> &trace, double calib, int window);
@@ -86,6 +88,14 @@ int is_valid_max(signal_struct &signal, int n);
 double signal_integral(signal_struct &signal, int debug);
 void time_compare(vector<signal_struct> &signal);
 
+// Histogram operations
+Double_t ScaleX(Double_t x, vector<double> par, const char *modus);
+Double_t ScaleX(Double_t y, vector<double> par, const char *modus);
+Double_t ScaleX(Double_t y, vector<double> par, const char *modus);
+void ScaleAxis(TAxis *a, Double_t (*Scale)(Double_t, Double_t, const char), vector<double> par, const char *modus);
+void ScaleXaxis(TH1D *h, Double_t (*Scale)(Double_t), vector<double> par, const char *modus);
+void ScaleYaxis(TH1D *h, Double_t (*Scale)(Double_t), vector<double> par, const char *modus);
+void ScaleZaxis(TH1D *h, Double_t (*Scale)(Double_t), vector<double> par, const char *modus);
 
 
 
@@ -222,7 +232,6 @@ void plot_waves_compare(char const *name, char const *modus) {
       }
 
       for (int j = 0; j < 4; j++){
-        if (j == 2 || j == 3 || j == 4) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
       tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
@@ -249,14 +258,14 @@ void plot_waves_compare(char const *name, char const *modus) {
       }
 
       for (int j = 0; j < 4; j++){
-        if (j == 2 || j == 3 || j == 4) continue; // dont print MA, MWD
+        // if (j == 1 || j == 3 || j == 4) continue; // dont print MA, MWD
         tg_combined[j] = new TGraph(tracelen,wave_x[j],wave_y[j]);
       }
       tg_combined[4] = new TGraph((int)NMO[i].trace.size(),wave_x_long,wave_y_long);
     } 
     else{ printf("ERROR (plot_waves): Plot option invalid\n");}
     for (int j = 0; j < 5; j++){
-		if (j == 2 || j == 3 || j == 4) continue;
+		  // if (j == 2 || j == 3 || j == 4) continue;
       if (j==0) {tg_combined[j]->SetLineColor(kBlack); tg_combined[j]->SetMarkerColor(kBlack);}
       if (j==1) {tg_combined[j]->SetLineColor(kGreen); tg_combined[j]->SetMarkerColor(kGreen);}
       if (j==2) {tg_combined[j]->SetLineColor(kOrange); tg_combined[j]->SetMarkerColor(kOrange);}
@@ -271,8 +280,16 @@ void plot_waves_compare(char const *name, char const *modus) {
       if (j==3) sprintf(text,"TMAX");
       if (j==4) sprintf(text,"NMO");
       tg_combined[j]->SetTitle(text);
-      legend->AddEntry(tg_combined[j],text,"f");
-      mg_combined->Add(tg_combined[j]);
+      if ( j == 0 || j == 3 || j == 4){
+        if (RAW_CALIB[i].is_signal == true) {
+          legend->AddEntry(tg_combined[j],text,"f");
+          mg_combined->Add(tg_combined[j]);
+        }
+        // if (strcmp(MODE, "COSMICS") != 0) {
+        //   legend->AddEntry(tg_combined[j],text,"f");
+        //   mg_combined->Add(tg_combined[j]);
+        // }
+      }
     }
     int ch = (i / (int)MAPPING.size()) + (i%(int)MAPPING.size())*(int)MAPPING[0].size();
     c_split->cd(ch+1);
@@ -304,25 +321,42 @@ void plot_time_energy(time_struct &array) {
   TLegend* legend = new TLegend(0.7,0.7,0.9,0.9);
   legend->SetHeader(""); // option "C" allows to center the header
   // Calculate the energy steps
-  double e_step = (E_WINDOW_RIGHT - E_WINDOW_LEFT)/N_E_WINDOW/100; // channels calculated to 100ch=1MeV
-  Double_t wave_x[N_E_WINDOW];
-  for(Int_t k = 0; k<N_E_WINDOW; k++){
-    wave_x[k] = E_WINDOW_LEFT/100 + k*e_step;
-  }
-  Double_t wave_y[N_E_WINDOW];
-  for(Int_t k = 0; k<N_E_WINDOW; k++){
-    // Check if timing array is empty
-    if ((int)array.h_timing[k].params.size() < 1){
-      printf("WARNING (plot_time_energy): Timing array is empty. Maybe there is only one channel in the readout?\n");
-      return;
+  if (strcmp("COSMICS", MODE)==0){
+    double e_step = (E_WINDOW_RIGHT - E_WINDOW_LEFT)/N_E_WINDOW/100; // channels calculated to 100ch=1MeV
+    Double_t wave_x[N_E_WINDOW];
+    for(Int_t k = 0; k<N_E_WINDOW; k++){
+      wave_x[k] = E_WINDOW_LEFT/100 + k*e_step;
     }
-    wave_y[k] = array.h_timing[k].params[4];
+    Double_t wave_y[N_E_WINDOW];
+    for(Int_t k = 0; k<N_E_WINDOW; k++){
+      // Check if timing array is empty
+      if ((int)array.h_timing[k].params.size() < 1){
+        printf("WARNING (plot_time_energy): Timing array is empty. Maybe there is only one channel in the readout?\n");
+        return;
+      }
+      wave_y[k] = array.h_timing[k].params[4];
+    }
+    Double_t wave_yerr[N_E_WINDOW];
+    for(Int_t k = 0; k<N_E_WINDOW; k++){
+      wave_yerr[k] = array.h_timing[k].params[5];
+    }
+    tg_waves = new TGraphErrors(N_E_WINDOW,wave_x,wave_y,0,wave_yerr);
   }
-  Double_t wave_yerr[N_E_WINDOW];
-  for(Int_t k = 0; k<N_E_WINDOW; k++){
-    wave_yerr[k] = array.h_timing[k].params[5];
+
+  if (strcmp("BEAM", MODE)==0){
+    Double_t wave_y[(int)array.h_timing.size()];
+    for(Int_t k = 0; k<(int)array.h_timing.size(); k++){
+      wave_y[k] = array.h_timing[k].params[4];
+    }
+    Double_t wave_yerr[(int)array.h_timing.size()];
+    for(Int_t k = 0; k<(int)array.h_timing.size(); k++){
+      wave_yerr[k] = array.h_timing[k].params[5];
+    }
+    tg_waves = new TGraphErrors((int)array.h_timing.size(),TAGGER.energy,wave_y,TAGGER.energy_err,wave_yerr);
   }
-  tg_waves = new TGraphErrors(N_E_WINDOW,wave_x,wave_y,0,wave_yerr);
+
+
+  
 
   // tg_waves->RemovePoint(0); 
   // tg_waves->RemovePoint(0); 
@@ -352,7 +386,7 @@ void plot_time_energy(time_struct &array) {
 
   vector<Double_t> fit_params;
 
-  fit_params = fit_graph_err(tg_waves, "resolution", 20, 30, 0);
+  fit_params = fit_graph_err(tg_waves, "resolution", "R", 20, 30, 0);
 
 
 
@@ -499,13 +533,15 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path, const char
       array[i].h_energy.hist->SetFillStyle(1001);
       array[i].h_energy.hist->SetFillColor(38);
       array[i].h_energy.hist->SetLineWidth(3);
-      if (array[i].h_energy.hist->GetListOfKeys()->Contains(FunName)){
+      // printf("Fit Function %s exists: %d\n", FunName, array[i].h_energy.hist->GetListOfFunctions()->FindObject(FunName));
+      /// Check if fit function exists
+      if ( array[i].h_energy.hist->GetListOfFunctions()->FindObject(FunName) != 0 ){
         array[i].h_energy.hist->GetFunction(FunName)->SetLineColor(kRed);
         array[i].h_energy.hist->GetFunction(FunName)->SetLineWidth(3);
       }
       array[i].h_energy.hist->SetLineColor(kBlack);
-      array[i].h_energy.hist->GetXaxis()->SetNdivisions(20);
-      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,7500);
+      array[i].h_energy.hist->GetXaxis()->SetNdivisions(25);
+      array[i].h_energy.hist->GetXaxis()->SetRangeUser(0,75);
       array[i].h_energy.hist->Draw();
     }
     if (strcmp(mode,"integral")==0){
@@ -513,7 +549,11 @@ void plot_energy_hist(vector<signal_struct> &array, char const *path, const char
       array[i].h_integral.hist->SetFillColor(38);
       array[i].h_integral.hist->SetFillStyle(1001);
       array[i].h_integral.hist->SetLineWidth(3);
-      array[i].h_integral.hist->SetLineColor(kBlack);      
+      array[i].h_integral.hist->SetLineColor(kBlack);  
+      if ( array[i].h_integral.hist->GetListOfFunctions()->FindObject(FunName) != 0 ){
+        array[i].h_integral.hist->GetFunction(FunName)->SetLineColor(kRed);
+        array[i].h_integral.hist->GetFunction(FunName)->SetLineWidth(3);
+      }    
       array[i].h_integral.hist->GetXaxis()->SetNdivisions(20);
       array[i].h_integral.hist->Draw();
     }
@@ -573,7 +613,7 @@ void plot_TH2D_hist_graph(TH2D *hist, vector<double> trace, char const *path, co
 }
 
 
-void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *name){
+void plot_energy_vs_tagged(vector<double> energy, vector<double> error, char const *path, const char *name){
   // GENERAL Energy Histograms
   hfile->cd(path);
   TCanvas *cs = new TCanvas("cs","cs",10,10,1280,1024);
@@ -585,17 +625,20 @@ void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *
   // Now the graph part
   TGraphErrors *graph;
   TGraph *graph2;
-  Double_t wave_y[(int)signal.tagged.size()];
-  Double_t wave_y_err[(int)signal.tagged.size()];
-  Double_t wave_x[(int)signal.tagged.size()];
+  Double_t wave_y[(int)energy.size()];
+  Double_t wave_y_err[(int)energy.size()];
+  Double_t wave_x_err[(int)energy.size()];
+  Double_t wave_x[(int)energy.size()];
 
-  for(Int_t n = 0; n < (int)signal.tagged.size(); n++){
-    wave_y[n] = signal.tagged[n].h_energy_mt.params[2] / 100; //  Norm to MeV 
-    wave_y_err[n] = signal.tagged[n].h_energy_mt.params[4] /100 ; // Norm to MeV
-    wave_x[n] = TAGGER.energy[n]; // Tagger energies
+  for(Int_t n = 0; n < (int)energy.size(); n++){
+    wave_y[n] = energy[n]; //  Norm to MeV 
+    wave_x[n] = TAGGER.energy[n]; //  Norm to MeV 
+    wave_y_err[n] = error[n]; // Norm to MeV
+    wave_x_err[n] = TAGGER.energy_err[n]/2; // Tagger energies
+    printf("%3.3f %3.3f+-%3.3f\n", TAGGER.energy[n], energy[n], error[n]/2);
   }
 
-  graph = new TGraphErrors((int)signal.tagged.size(),wave_x,wave_y,0,wave_y_err);
+  graph = new TGraphErrors((int)energy.size(),wave_x,wave_y,wave_x_err,wave_y_err);
 
   graph->RemovePoint(5);
   
@@ -630,7 +673,7 @@ void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *
 
   vector<Double_t> fit_params;
 
-  fit_params = fit_graph_err(graph, "SIPMpixel", 0, 500, 0);
+  fit_params = fit_graph_err(graph, "SIPMpixel", "R", 0, 500, 0);
 
 
   // printf("+++++++++ FIT +++++++++++\n");
@@ -645,7 +688,7 @@ void plot_energy_vs_tagged(signal_struct &signal, char const *path, const char *
 }
 
 // Energy resolution
-void plot_energy_resolution(signal_struct &signal, char const *path, const char *name){
+void plot_energy_resolution(vector<double> sigma, vector<double> sigma_err, char const *path, const char *name){
   // GENERAL Energy Histograms
   hfile->cd(path);
   TCanvas *cs = new TCanvas("cs","cs",10,10,1280,1024);
@@ -656,21 +699,19 @@ void plot_energy_resolution(signal_struct &signal, char const *path, const char 
   gStyle->SetLabelSize(0.05,"X");
   // Now the graph part
   TGraphErrors *graph;
-  Double_t wave_y[(int)signal.tagged.size()];
-  Double_t wave_y_err[(int)signal.tagged.size()];
-  Double_t wave_x[(int)signal.tagged.size()];
+  Double_t wave_y[(int)sigma.size()];
+  Double_t wave_y_err[(int)sigma.size()];
+  Double_t wave_x[(int)sigma.size()];
+  Double_t wave_x_err[(int)sigma.size()];
 
-  for(Int_t n = 0; n < (int)signal.tagged.size(); n++){
-    // From gaus fit:
-    // Field 0,1: amp, amp_err
-    // Field 2,3: mean, mean_err
-    // Field 4,5: std, std_err 
-    wave_y[n] = signal.tagged[n].h_energy_mt.params[4] / (TAGGER.energy[n]*100) *100; //  Norm to MeV and to percent
-    wave_y_err[n] = signal.tagged[n].h_energy_mt.params[5] / (TAGGER.energy[n]*100 ) *100 ; // Norm to MeV and to percent
+  for(Int_t n = 0; n < (int)sigma.size(); n++){
+    wave_y[n] = sigma[n] / (TAGGER.energy[n]) *100; //  Norm to MeV and to percent
+    wave_y_err[n] = sqrt(wave_y[n]) ; // Norm to MeV and to percent
     wave_x[n] = TAGGER.energy[n]; // Tagger energies
+    wave_x_err[n] = TAGGER.energy_err[n]; // Tagger energies
   }
 
-  graph = new TGraphErrors((int)signal.tagged.size(),wave_x,wave_y,0,wave_y_err);
+  graph = new TGraphErrors((int)sigma.size(),wave_x,wave_y,wave_x_err,wave_y_err);
 
   graph->RemovePoint(5); // Tagger energy does not exist
   graph->SetName("data_graph");
@@ -694,7 +735,7 @@ void plot_energy_resolution(signal_struct &signal, char const *path, const char 
 
   vector<Double_t> fit_params;
 
-  fit_params = fit_graph_err(graph, "resolution", 10, 300, 0);
+  fit_params = fit_graph_err(graph, "resolution", "R", 10, 300, 0);
 
   // graph->GetFunction("resolution")->SetLineColor(kRed);
   // graph->GetFunction("resolution")->SetLineWidth(4);
@@ -825,7 +866,7 @@ void plot_timing_hist(vector<signal_struct> &signal, char const *path){
   }
 }
 
-void plot_trace(vector<double> &trace, char const *name, char const *modus) {
+void plot_trace(vector<double> &trace, char const *name, char const *path, char const *modus) {
   // Canvas for the combined waveforms
   TCanvas *canvas = new TCanvas("canvas","Wave_forms",200,10,1280,1024);
   canvas->SetGrid();
@@ -855,6 +896,46 @@ void plot_trace(vector<double> &trace, char const *name, char const *modus) {
 
   graph->Draw(modus);
 
+  hfile->cd(path);
+  canvas->Write(name);
+  // delete legend;
+  // delete[] tg_combined;
+  // delete mg_combined;
+  delete canvas;
+}
+
+
+void plot_1D_xy(vector<double> &x, vector<double> &y, char const *name, char const *path, char const *modus) {
+  // Canvas for the combined waveforms
+  TCanvas *canvas = new TCanvas("canvas","Wave_forms",200,10,1280,1024);
+  canvas->SetGrid();
+  canvas->SetTitle("1D Graph; x; y");
+
+  TGraph *graph;
+
+  TLegend* legend = new TLegend(0.7,0.7,0.9,0.9);
+  legend->SetHeader("ADC Digitization"); // option "C" allows to center the header
+
+  Double_t wave_y[y.size()];
+  Double_t wave_x[x.size()];
+  for(Int_t n = 0; n< (Int_t)x.size(); n++){
+    wave_y[n] = y[n]; 
+    wave_x[n] = x[n]; // Calibrate to the sampling rate
+  }
+
+  graph = new TGraph((Int_t)x.size(),wave_x,wave_y);
+  
+  graph->SetLineColor(1);
+  // graph->SetMarkerColor(i+1);
+  graph->SetMarkerColor(1);
+  graph->SetMarkerSize(0.35);
+  graph->SetLineWidth(2);
+
+  if (is_in_string(modus, "B")) graph->SetFillColor(38);
+
+  graph->Draw(modus);
+
+  hfile->cd(path);
   canvas->Write(name);
   // delete legend;
   // delete[] tg_combined;
@@ -1180,11 +1261,12 @@ void init_hists(int channels){
   else{
     // The RAW containers always need full channel range
     for (Int_t i=0; i<CHANNELS; i++){
-      hfile->cd("ENERGY/PULSE_HIGHT/RAW");
+      hfile->cd("ENERGY/PULSE_HIGHT/RAW/");
       sprintf(name,"ENERGY_RAW%02d",i);
       RAW[i].h_energy.hist=new TH1D(name,"",bins_pulsheight,0,(int)(range_pulsheight/GENERAL_SCALING));
       RAW[i].h_energy.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
       RAW[i].h_energy.hist->GetYaxis()->SetTitle("Counts");
+      hfile->cd("ENERGY/PULSE_HIGHT/RAW/BASELINE_STATS");
       sprintf(name,"BASELINE_RAW_MEAN%02d",i);
       RAW[i].base.h_mean.hist=new TH1D(name,"",bins_pulsheight+20000,0,(int)(range_pulsheight/GENERAL_SCALING)+20000*GENERAL_SCALING);
       RAW[i].base.h_mean.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
@@ -1208,6 +1290,19 @@ void init_hists(int channels){
       RAW_CALIB[i].h_energy.hist=new TH1D(name,"",bins_pulsheight,0,range_pulsheight);
       RAW_CALIB[i].h_energy.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
       RAW_CALIB[i].h_energy.hist->GetYaxis()->SetTitle("Counts");
+      hfile->cd("ENERGY/PULSE_HIGHT/RAW_CALIB/BASELINE_STATS");
+      sprintf(name,"BASELINE_RAW_MEAN%02d",i);
+      RAW_CALIB[i].base.h_mean.hist=new TH1D(name,"",bins_pulsheight+20000,0,(int)(range_pulsheight/GENERAL_SCALING)+20000*GENERAL_SCALING);
+      RAW_CALIB[i].base.h_mean.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+      RAW_CALIB[i].base.h_mean.hist->GetYaxis()->SetTitle("Counts");
+      sprintf(name,"BASELINE_RAW_CALIB_STD%02d",i);
+      RAW_CALIB[i].base.h_std.hist=new TH1D(name,"",bins_pulsheight,0,(int)(range_pulsheight/GENERAL_SCALING));
+      RAW_CALIB[i].base.h_std.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+      RAW_CALIB[i].base.h_std.hist->GetYaxis()->SetTitle("Counts");
+      sprintf(name,"BASELINE_SAMPLE_DISTRIBUTION%02d",i);
+      RAW_CALIB[i].base.h_samples.hist=new TH1D(name,"",20000,-10000,10000);
+      RAW_CALIB[i].base.h_samples.hist->GetXaxis()->SetTitle("Pulse_height / a.u.");
+      RAW_CALIB[i].base.h_samples.hist->GetYaxis()->SetTitle("Counts");
       hfile->cd("ENERGY/INTEGRAL/RAW_CALIB");
       sprintf(name,"INTEGRAL_RAW_CALIB%02d",i);
       RAW_CALIB[i].h_integral.hist=new TH1D(name,"",bins_integral,0,range_integral);
@@ -1551,8 +1646,11 @@ void init_hists(int channels){
                       1000,500,1500); // y-dimension
     TAGGER.h_tagger_vs_energy.hist->GetXaxis()->SetTitle("Energy in ECAL25 [MeV]");
     TAGGER.h_tagger_vs_energy.hist->GetYaxis()->SetTitle("Tagger time in channels");
-
-
+    // Tagger counting statistics
+    hfile->cd("ENERGY/TAGGER/");
+    TAGGER.h_stats.hist = new TH1D("Tagger statistics","",1000,0,1000);
+    TAGGER.h_stats.hist->GetXaxis()->SetTitle("Energy [MeV]");
+    TAGGER.h_stats.hist->GetYaxis()->SetTitle("Counts");
     //
     // Initialize the detector sum stuff
     //
@@ -1767,16 +1865,26 @@ void init_hists(int channels){
   if (strcmp(MODE, "COSMICS") == 0){
     hfile->cd("ENERGY/PULSE_HIGHT/RAW_CALIB");
     sprintf(name,"RAW_CALIB_PARAMETERS");
-    CALIB.h_RAW_energy.hist = new TH1D(name,"",100,0,10);
+    // Energy calibration
+    CALIB.h_RAW_energy.hist = new TH1D(name,"",150,0,15);
     CALIB.h_RAW_energy.hist->GetXaxis()->SetTitle("Calibration factor / arb. units");
     CALIB.h_RAW_energy.hist->GetYaxis()->SetTitle("Counts");
     CALIB.h_RAW_energy.hist->SetFillColor(38);
     CALIB.h_RAW_energy.hist->SetFillStyle(1001);
     CALIB.h_RAW_energy.hist->SetLineWidth(3);
     CALIB.h_RAW_energy.hist->SetLineColor(kBlack);
+    // Detector Resolution
+    CALIB.h_RAW_energy.hist = new TH1D(name,"",150,0,15);
+    CALIB.h_RAW_energy.hist->GetXaxis()->SetTitle("Calibration factor / arb. units");
+    CALIB.h_RAW_energy.hist->GetYaxis()->SetTitle("Counts");
+    CALIB.h_RAW_energy.hist->SetFillColor(38);
+    CALIB.h_RAW_energy.hist->SetFillStyle(1001);
+    CALIB.h_RAW_energy.hist->SetLineWidth(3);
+    CALIB.h_RAW_energy.hist->SetLineColor(kBlack);
+
     hfile->cd("ENERGY/PULSE_HIGHT/TMAX");
     sprintf(name,"TMAX_PARAMETERS");
-    CALIB.h_TMAX_energy.hist = new TH1D(name,"",100,0,10);
+    CALIB.h_TMAX_energy.hist = new TH1D(name,"",150,0,15);
     CALIB.h_TMAX_energy.hist->GetXaxis()->SetTitle("Calibration factor / arb. units");
     CALIB.h_TMAX_energy.hist->GetYaxis()->SetTitle("Counts");
     CALIB.h_TMAX_energy.hist->SetFillColor(38);
@@ -1815,24 +1923,34 @@ void fill_hists(){
     }
     // Fill histograms
     for(int i=0; i<(int)RAW_CALIB.size(); i++){
+      // Skip invalid channels
+      if (RAW_CALIB[i].is_valid == false) continue;
       // Fill the energy histograms
-      if(RAW_CALIB[i].energy>0) RAW_CALIB[i].h_energy.hist->Fill(RAW_CALIB[i].energy);
-      if(MA[i].energy>0) MA[i].h_energy.hist->Fill(MA[i].energy);
-      if(MWD[i].energy>0) MWD[i].h_energy.hist->Fill(MWD[i].energy);
-      if(TMAX[i].energy>0) TMAX[i].h_energy.hist->Fill(TMAX[i].energy);
-      if(NMO[i].energy>0) NMO[i].h_energy.hist->Fill(NMO[i].energy);
-      // Fill the integral and ratio histograms
-      if(RAW_CALIB[i].integral>0) RAW_CALIB[i].h_integral.hist->Fill(RAW_CALIB[i].integral);
-      if(MA[i].integral>0) MA[i].h_integral.hist->Fill(MA[i].integral);
-      if(MWD[i].integral>0) MWD[i].h_integral.hist->Fill(MWD[i].integral);
-      if(TMAX[i].integral>0) TMAX[i].h_integral.hist->Fill(TMAX[i].integral);
-      if(NMO[i].integral>0) NMO[i].h_integral.hist->Fill(NMO[i].integral);
+      if(RAW_CALIB[i].energy>ENERGY_CUT) RAW_CALIB[i].h_energy.hist->Fill(RAW_CALIB[i].energy);
+      if (RAW_CALIB[i].is_signal == true){
+        if(RAW_CALIB[i].base.mean>0) RAW_CALIB[i].base.h_mean.hist->Fill(RAW_CALIB[i].base.mean);
+        if(RAW_CALIB[i].base.std>0) RAW_CALIB[i].base.h_std.hist->Fill(RAW_CALIB[i].base.std);
+        for(int n=0; n < BASELINE_CUT*RAW_CALIB[i].multis; n++){
+          RAW_CALIB[i].base.h_samples.hist->Fill(RAW_CALIB[i].trace[n]);   
+        }
+      }
       //
-      if(RAW_CALIB[i].ratio>0) RAW_CALIB[i].h_ratio.hist->Fill(RAW_CALIB[i].ratio);
-      if(MA[i].ratio>0) MA[i].h_ratio.hist->Fill(MA[i].ratio);
-      if(MWD[i].ratio>0) MWD[i].h_ratio.hist->Fill(MWD[i].ratio);
-      if(TMAX[i].ratio>0) TMAX[i].h_ratio.hist->Fill(TMAX[i].ratio);
-      if(NMO[i].ratio>0) NMO[i].h_ratio.hist->Fill(NMO[i].ratio);
+      if(MA[i].energy>ENERGY_CUT) MA[i].h_energy.hist->Fill(MA[i].energy);
+      if(MWD[i].energy>ENERGY_CUT) MWD[i].h_energy.hist->Fill(MWD[i].energy);
+      if(TMAX[i].energy>ENERGY_CUT) TMAX[i].h_energy.hist->Fill(TMAX[i].energy);
+      if(NMO[i].energy>ENERGY_CUT) NMO[i].h_energy.hist->Fill(NMO[i].energy);
+      // Fill the integral and ratio histograms
+      if(RAW_CALIB[i].integral>ENERGY_CUT) RAW_CALIB[i].h_integral.hist->Fill(RAW_CALIB[i].integral);
+      if(MA[i].integral>ENERGY_CUT) MA[i].h_integral.hist->Fill(MA[i].integral);
+      if(MWD[i].integral>ENERGY_CUT) MWD[i].h_integral.hist->Fill(MWD[i].integral);
+      if(TMAX[i].integral>ENERGY_CUT) TMAX[i].h_integral.hist->Fill(TMAX[i].integral);
+      if(NMO[i].integral>ENERGY_CUT) NMO[i].h_integral.hist->Fill(NMO[i].integral);
+      //
+      if(RAW_CALIB[i].ratio>ENERGY_CUT) RAW_CALIB[i].h_ratio.hist->Fill(RAW_CALIB[i].ratio);
+      if(MA[i].ratio>ENERGY_CUT) MA[i].h_ratio.hist->Fill(MA[i].ratio);
+      if(MWD[i].ratio>ENERGY_CUT) MWD[i].h_ratio.hist->Fill(MWD[i].ratio);
+      if(TMAX[i].ratio>ENERGY_CUT) TMAX[i].h_ratio.hist->Fill(TMAX[i].ratio);
+      if(NMO[i].ratio>ENERGY_CUT) NMO[i].h_ratio.hist->Fill(NMO[i].ratio);
       // Fill the timing histograms
       for(int j=0; j<(int)RAW_CALIB.size(); j++){
         // Each energy bin
@@ -1848,41 +1966,41 @@ void fill_hists(){
       if (strcmp(MODE, "BEAM") == 0){
         for(int k=0; k<N_E_WINDOW; k++){    
           // General hists
-          if (RAW_CALIB[i].tagged[k].energy != 0.0) RAW_CALIB[i].tagged[k].h_energy.hist->Fill(RAW_CALIB[i].tagged[k].energy);
-          if (MA[i].tagged[k].energy != 0.0) MA[i].tagged[k].h_energy.hist->Fill(MA[i].tagged[k].energy);
-          if (MWD[i].tagged[k].energy != 0.0) MWD[i].tagged[k].h_energy.hist->Fill(MWD[i].tagged[k].energy);
-          if (TMAX[i].tagged[k].energy != 0.0) TMAX[i].tagged[k].h_energy.hist->Fill(TMAX[i].tagged[k].energy);
-          if (NMO[i].tagged[k].energy != 0.0) NMO[i].tagged[k].h_energy.hist->Fill(NMO[i].tagged[k].energy);
+          if (RAW_CALIB[i].tagged[k].energy > ENERGY_CUT) RAW_CALIB[i].tagged[k].h_energy.hist->Fill(RAW_CALIB[i].tagged[k].energy);
+          if (MA[i].tagged[k].energy > ENERGY_CUT) MA[i].tagged[k].h_energy.hist->Fill(MA[i].tagged[k].energy);
+          if (MWD[i].tagged[k].energy > ENERGY_CUT) MWD[i].tagged[k].h_energy.hist->Fill(MWD[i].tagged[k].energy);
+          if (TMAX[i].tagged[k].energy > ENERGY_CUT) TMAX[i].tagged[k].h_energy.hist->Fill(TMAX[i].tagged[k].energy);
+          if (NMO[i].tagged[k].energy > ENERGY_CUT) NMO[i].tagged[k].h_energy.hist->Fill(NMO[i].tagged[k].energy);
           //
-          if (RAW_CALIB[i].tagged[k].integral != 0.0) RAW_CALIB[i].tagged[k].h_integral.hist->Fill(RAW_CALIB[i].tagged[k].integral);
-          if (MA[i].tagged[k].integral != 0.0) MA[i].tagged[k].h_integral.hist->Fill(MA[i].tagged[k].integral);
-          if (MWD[i].tagged[k].integral != 0.0) MWD[i].tagged[k].h_integral.hist->Fill(MWD[i].tagged[k].integral);
-          if (TMAX[i].tagged[k].integral != 0.0) TMAX[i].tagged[k].h_integral.hist->Fill(TMAX[i].tagged[k].integral);
-          if (NMO[i].tagged[k].integral != 0.0) NMO[i].tagged[k].h_integral.hist->Fill(NMO[i].tagged[k].integral);
+          if (RAW_CALIB[i].tagged[k].integral > ENERGY_CUT) RAW_CALIB[i].tagged[k].h_integral.hist->Fill(RAW_CALIB[i].tagged[k].integral);
+          if (MA[i].tagged[k].integral > ENERGY_CUT) MA[i].tagged[k].h_integral.hist->Fill(MA[i].tagged[k].integral);
+          if (MWD[i].tagged[k].integral > ENERGY_CUT) MWD[i].tagged[k].h_integral.hist->Fill(MWD[i].tagged[k].integral);
+          if (TMAX[i].tagged[k].integral > ENERGY_CUT) TMAX[i].tagged[k].h_integral.hist->Fill(TMAX[i].tagged[k].integral);
+          if (NMO[i].tagged[k].integral > ENERGY_CUT) NMO[i].tagged[k].h_integral.hist->Fill(NMO[i].tagged[k].integral);
           // W/o multiples
-          if (RAW_CALIB[i].tagged[k].energy_m != 0.0) RAW_CALIB[i].tagged[k].h_energy_m.hist->Fill(RAW_CALIB[i].tagged[k].energy_m);
-          if (MA[i].tagged[k].energy_m != 0.0) MA[i].tagged[k].h_energy_m.hist->Fill(MA[i].tagged[k].energy_m);
-          if (MWD[i].tagged[k].energy_m != 0.0) MWD[i].tagged[k].h_energy_m.hist->Fill(MWD[i].tagged[k].energy_m);
-          if (TMAX[i].tagged[k].energy_m != 0.0) TMAX[i].tagged[k].h_energy_m.hist->Fill(TMAX[i].tagged[k].energy_m);
-          if (NMO[i].tagged[k].energy_m != 0.0) NMO[i].tagged[k].h_energy_m.hist->Fill(NMO[i].tagged[k].energy_m);
+          if (RAW_CALIB[i].tagged[k].energy_m > ENERGY_CUT) RAW_CALIB[i].tagged[k].h_energy_m.hist->Fill(RAW_CALIB[i].tagged[k].energy_m);
+          if (MA[i].tagged[k].energy_m > ENERGY_CUT) MA[i].tagged[k].h_energy_m.hist->Fill(MA[i].tagged[k].energy_m);
+          if (MWD[i].tagged[k].energy_m > ENERGY_CUT) MWD[i].tagged[k].h_energy_m.hist->Fill(MWD[i].tagged[k].energy_m);
+          if (TMAX[i].tagged[k].energy_m > ENERGY_CUT) TMAX[i].tagged[k].h_energy_m.hist->Fill(TMAX[i].tagged[k].energy_m);
+          if (NMO[i].tagged[k].energy_m > ENERGY_CUT) NMO[i].tagged[k].h_energy_m.hist->Fill(NMO[i].tagged[k].energy_m);
           //
-          if (RAW_CALIB[i].tagged[k].integral_m != 0.0) RAW_CALIB[i].tagged[k].h_integral_m.hist->Fill(RAW_CALIB[i].tagged[k].integral_m);
-          if (MA[i].tagged[k].integral_m != 0.0) MA[i].tagged[k].h_integral_m.hist->Fill(MA[i].tagged[k].integral_m);
-          if (MWD[i].tagged[k].integral_m != 0.0) MWD[i].tagged[k].h_integral_m.hist->Fill(MWD[i].tagged[k].integral_m);
-          if (TMAX[i].tagged[k].integral_m != 0.0) TMAX[i].tagged[k].h_integral_m.hist->Fill(TMAX[i].tagged[k].integral_m);
-          if (NMO[i].tagged[k].integral_m != 0.0) NMO[i].tagged[k].h_integral_m.hist->Fill(NMO[i].tagged[k].integral_m);
+          if (RAW_CALIB[i].tagged[k].integral_m > ENERGY_CUT) RAW_CALIB[i].tagged[k].h_integral_m.hist->Fill(RAW_CALIB[i].tagged[k].integral_m);
+          if (MA[i].tagged[k].integral_m > ENERGY_CUT) MA[i].tagged[k].h_integral_m.hist->Fill(MA[i].tagged[k].integral_m);
+          if (MWD[i].tagged[k].integral_m > ENERGY_CUT) MWD[i].tagged[k].h_integral_m.hist->Fill(MWD[i].tagged[k].integral_m);
+          if (TMAX[i].tagged[k].integral_m > ENERGY_CUT) TMAX[i].tagged[k].h_integral_m.hist->Fill(TMAX[i].tagged[k].integral_m);
+          if (NMO[i].tagged[k].integral_m > ENERGY_CUT) NMO[i].tagged[k].h_integral_m.hist->Fill(NMO[i].tagged[k].integral_m);
           // w/o multiples and w/ timing window
-          if (RAW_CALIB[i].tagged[k].energy_mt != 0.0) RAW_CALIB[i].tagged[k].h_energy_mt.hist->Fill(RAW_CALIB[i].tagged[k].energy_mt);
-          if (MA[i].tagged[k].energy_mt != 0.0) MA[i].tagged[k].h_energy_mt.hist->Fill(MA[i].tagged[k].energy_mt);
-          if (MWD[i].tagged[k].energy_mt != 0.0) MWD[i].tagged[k].h_energy_mt.hist->Fill(MWD[i].tagged[k].energy_mt);
-          if (TMAX[i].tagged[k].energy_mt != 0.0) TMAX[i].tagged[k].h_energy_mt.hist->Fill(TMAX[i].tagged[k].energy_mt);
-          if (NMO[i].tagged[k].energy_mt != 0.0) NMO[i].tagged[k].h_energy_mt.hist->Fill(NMO[i].tagged[k].energy_mt);
+          if (RAW_CALIB[i].tagged[k].energy_mt > ENERGY_CUT) RAW_CALIB[i].tagged[k].h_energy_mt.hist->Fill(RAW_CALIB[i].tagged[k].energy_mt);
+          if (MA[i].tagged[k].energy_mt > ENERGY_CUT) MA[i].tagged[k].h_energy_mt.hist->Fill(MA[i].tagged[k].energy_mt);
+          if (MWD[i].tagged[k].energy_mt > ENERGY_CUT) MWD[i].tagged[k].h_energy_mt.hist->Fill(MWD[i].tagged[k].energy_mt);
+          if (TMAX[i].tagged[k].energy_mt > ENERGY_CUT) TMAX[i].tagged[k].h_energy_mt.hist->Fill(TMAX[i].tagged[k].energy_mt);
+          if (NMO[i].tagged[k].energy_mt > ENERGY_CUT) NMO[i].tagged[k].h_energy_mt.hist->Fill(NMO[i].tagged[k].energy_mt);
           //
-          if (RAW_CALIB[i].tagged[k].integral_mt != 0.0) RAW_CALIB[i].tagged[k].h_integral_mt.hist->Fill(RAW_CALIB[i].tagged[k].integral_mt);
-          if (MA[i].tagged[k].integral_mt != 0.0) MA[i].tagged[k].h_integral_mt.hist->Fill(MA[i].tagged[k].integral_mt);
-          if (MWD[i].tagged[k].integral_mt != 0.0) MWD[i].tagged[k].h_integral_mt.hist->Fill(MWD[i].tagged[k].integral_mt);
-          if (TMAX[i].tagged[k].integral_mt != 0.0) TMAX[i].tagged[k].h_integral_mt.hist->Fill(TMAX[i].tagged[k].integral_mt);
-          if (NMO[i].tagged[k].integral_mt != 0.0) NMO[i].tagged[k].h_integral_mt.hist->Fill(NMO[i].tagged[k].integral_mt);
+          if (RAW_CALIB[i].tagged[k].integral_mt > ENERGY_CUT) RAW_CALIB[i].tagged[k].h_integral_mt.hist->Fill(RAW_CALIB[i].tagged[k].integral_mt);
+          if (MA[i].tagged[k].integral_mt > ENERGY_CUT) MA[i].tagged[k].h_integral_mt.hist->Fill(MA[i].tagged[k].integral_mt);
+          if (MWD[i].tagged[k].integral_mt > ENERGY_CUT) MWD[i].tagged[k].h_integral_mt.hist->Fill(MWD[i].tagged[k].integral_mt);
+          if (TMAX[i].tagged[k].integral_mt > ENERGY_CUT) TMAX[i].tagged[k].h_integral_mt.hist->Fill(TMAX[i].tagged[k].integral_mt);
+          if (NMO[i].tagged[k].integral_mt > ENERGY_CUT) NMO[i].tagged[k].h_integral_mt.hist->Fill(NMO[i].tagged[k].integral_mt);
         }
       }
     }
@@ -1895,25 +2013,29 @@ void fill_hists(){
     // Save the ECAL sum in the histogram
     if (strcmp(MODE, "BEAM") == 0){
       for(int i=0; i<(int)ECAL25.size(); i++){
-        if (ECAL25[i].energy > 0) ECAL25[i].h_energy.hist->Fill(ECAL25[i].energy);
-        if (ECAL25[i].integral > 0) ECAL25[i].h_integral.hist->Fill(ECAL25[i].integral);
+        if (ECAL25[i].energy > ENERGY_CUT) ECAL25[i].h_energy.hist->Fill(ECAL25[i].energy);
+        if (ECAL25[i].integral > ENERGY_CUT) ECAL25[i].h_integral.hist->Fill(ECAL25[i].integral);
       }
       // The tagged energy sum
       for(int k=0; k<N_E_WINDOW; k++){
         for(int i=0; i<(int)ECAL25.size(); i++){
-          if (ECAL25[i].tagged[k].energy > 0) ECAL25[i].tagged[k].h_energy.hist->Fill( ECAL25[i].tagged[k].energy );
-          if (ECAL25[i].tagged[k].energy_m > 0) ECAL25[i].tagged[k].h_energy_m.hist->Fill( ECAL25[i].tagged[k].energy_m );
-          if ( i == 3 && LIN_COMP != 0.0) {
-            if (ECAL25[i].tagged[k].energy_mt > 0) ECAL25[i].tagged[k].h_energy_mt.hist->Fill( SIPMlinearize(ECAL25[i].tagged[k].energy_mt, LIN_COMP) );
+          if (ECAL25[i].tagged[k].energy > ENERGY_CUT) ECAL25[i].tagged[k].h_energy.hist->Fill( ECAL25[i].tagged[k].energy );
+          if (ECAL25[i].tagged[k].energy_m > ENERGY_CUT) ECAL25[i].tagged[k].h_energy_m.hist->Fill( ECAL25[i].tagged[k].energy_m );
+          if ( i == 3 && LIN_COMP != 0.0  ) {
+            if (ECAL25[i].tagged[k].energy_mt > ENERGY_CUT) {
+              if ( SIPMlinearize(ECAL25[i].tagged[k].energy_mt, LIN_COMP) != 0) {
+                ECAL25[i].tagged[k].h_energy_mt.hist->Fill( SIPMlinearize(ECAL25[i].tagged[k].energy_mt, LIN_COMP) );
+              }
+            }
           }
           else {
-            if (ECAL25[i].tagged[k].energy_mt > 0) ECAL25[i].tagged[k].h_energy_mt.hist->Fill( ECAL25[i].tagged[k].energy_mt );
+            if (ECAL25[i].tagged[k].energy_mt > ENERGY_CUT) ECAL25[i].tagged[k].h_energy_mt.hist->Fill( ECAL25[i].tagged[k].energy_mt );
           }
           
           //
-          if (ECAL25[i].tagged[k].integral > 0) ECAL25[i].tagged[k].h_integral.hist->Fill( ECAL25[i].tagged[k].integral );
-          if (ECAL25[i].tagged[k].integral_m > 0) ECAL25[i].tagged[k].h_integral_m.hist->Fill( ECAL25[i].tagged[k].integral_m );
-          if (ECAL25[i].tagged[k].integral_mt > 0) ECAL25[i].tagged[k].h_integral_mt.hist->Fill( ECAL25[i].tagged[k].integral_mt );
+          if (ECAL25[i].tagged[k].integral > ENERGY_CUT) ECAL25[i].tagged[k].h_integral.hist->Fill( ECAL25[i].tagged[k].integral );
+          if (ECAL25[i].tagged[k].integral_m > ENERGY_CUT) ECAL25[i].tagged[k].h_integral_m.hist->Fill( ECAL25[i].tagged[k].integral_m );
+          if (ECAL25[i].tagged[k].integral_mt > ENERGY_CUT) ECAL25[i].tagged[k].h_integral_mt.hist->Fill( ECAL25[i].tagged[k].integral_mt );
         }
       }
     }
@@ -2027,13 +2149,30 @@ Double_t langaufun(Double_t *x, Double_t *par) {
   return (par[2] * step * sum  / par[3]);
 }
 
+Double_t lingaufun(Double_t *x, Double_t *par) {
+  //Fit parameters:
+  //par[0]=Width (scale) parameter of Gaus density
+  //par[1]=Most Probable (MP, location) parameter of Gaus density
+  //par[2]=Amplitude
+  //par[3]=Ntot of linearization function
+  //
+  // Control constants
+  // Variables
+  Double_t lingau;
+  Double_t x_conv = SIPMpixel(x, &par[3]);
+
+  lingau = par[2] * TMath::Gaus(x_conv, par[1], par[0]);
+
+  return(lingau);
+}
+
 // From $ROOTSYS/tutorials/fit/langaus.C
 TF1 *langaufit(TH1D *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent){
   // Once again, here are the Landau * Gaussian parameters:
   //   par[0]=Width (scale) parameter of Landau density
   //   par[1]=Most Probable (MP, location) parameter of Landau density
   //   par[2]=Total area (integral -inf to inf, normalization constant)
-  //   par[3]=Width (sigma) of convoluted Gaussian function
+  //   par[3]=(sigma) of convoluted Gaussian function
   //
   // Variables for langaufit call:
   //   his             histogram to fit
@@ -2051,6 +2190,7 @@ TF1 *langaufit(TH1D *his, Double_t *fitrange, Double_t *startvalues, Double_t *p
   TF1 *ffitold = (TF1*)gROOT->GetListOfFunctions()->FindObject(FunName);
   if (ffitold) delete ffitold;
   TF1 *ffit = new TF1(FunName,langaufun,fitrange[0],fitrange[1],4);
+  ffit->SetNpx(10000);
   // TF1 *ffit = new TF1(FunName,langaufun,fitrange[0],fitrange[1],4);
   ffit->SetParameters(startvalues);
   ffit->SetParNames("Width","MP","Area","GSigma");//, "A", "m");
@@ -2071,8 +2211,52 @@ TF1 *langaufit(TH1D *his, Double_t *fitrange, Double_t *startvalues, Double_t *p
   return (ffit);              // return fit function
 }
 
+TF1 *lingaufit(TH1D *his, Double_t *fitrange, Double_t *startvalues, Double_t *parlimitslo, Double_t *parlimitshi, Double_t *fitparams, Double_t *fiterrors, Double_t *ChiSqr, Int_t *NDF, bool silent){
+  // Once again, here are the Landau * Gaussian parameters:
+  //   par[0]=Width (scale) parameter of Gaus density
+  //   par[1]=Most Probable (MP, location) parameter of Gaus density
+  //   par[2]=Amplitude
+  //   par[3]=Ntot of linearization function
+  //
+  // Variables for langaufit call:
+  //   his             histogram to fit
+  //   fitrange[2]     lo and hi boundaries of fit range
+  //   startvalues[4]  reasonable start values for the fit
+  //   parlimitslo[4]  lower parameter limits
+  //   parlimitshi[4]  upper parameter limits
+  //   fitparams[4]    returns the final fit parameters
+  //   fiterrors[4]    returns the final fit errors
+  //   ChiSqr          returns the chi square
+  //   NDF             returns ndf
+  Int_t i;
+  Char_t FunName[100];
+  sprintf(FunName,"Fitfcn_%s",his->GetName());
+  TF1 *ffitold = (TF1*)gROOT->GetListOfFunctions()->FindObject(FunName);
+  if (ffitold) delete ffitold;
+  TF1 *ffit = new TF1(FunName,lingaufun,fitrange[0],fitrange[1],4);
+  ffit->SetNpx(10000);
+  // TF1 *ffit = new TF1(FunName,langaufun,fitrange[0],fitrange[1],4);
+  ffit->SetParameters(startvalues);
+  ffit->SetParNames("Width","MP","Amplitude", "Ntot");//, "A", "m");
+  // ffit->SetParNames("Width","MP","Area","GSigma");
+  for (i=0; i<4; i++) {
+    ffit->SetParLimits(i, parlimitslo[i], parlimitshi[i]);
+  }
+  // Do the fit (if suppress output, use silent=true aka "Q")
+  if (silent) his->Fit(FunName,"RBQ");
+  else his->Fit(FunName,"RB");
+  // fit within specified range, use ParLimits, "Q" for quite output
+  ffit->GetParameters(fitparams);    // obtain fit parameters
+  for (i=0; i<4; i++) {
+    fiterrors[i] = ffit->GetParError(i);     // obtain fit parameter errors
+  }
+  ChiSqr[0] = ffit->GetChisquare();  // obtain chi^2
+  NDF[0] = ffit->GetNDF();           // obtain ndf
+  return (ffit);              // return fit function
+}
+
 // From $ROOTSYS/tutorials/fit/langaus.C
-Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM) {
+Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM, char const *function) {
   // Seaches for the location (x value) at the maximum of the
   // Landau-Gaussian convolute and its full width at half-maximum.
   //
@@ -2091,7 +2275,8 @@ Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM) {
     i++;
     lold = l;
     x = p + step;
-    l = langaufun(&x,params);
+    if (strcmp(function, "langaus") == 0) l = langaufun(&x,params);
+    if (strcmp(function, "lingaus") == 0) l = lingaufun(&x,params);
     if (l < lold){
       step = -step/10;
     }
@@ -2111,7 +2296,8 @@ Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM) {
     i++;
     lold = l;
     x = p + step;
-    l = TMath::Abs(langaufun(&x,params) - fy);
+    if (strcmp(function, "langaus") == 0) l = TMath::Abs(langaufun(&x,params) - fy);
+    if (strcmp(function, "lingaus") == 0) l = TMath::Abs(lingaufun(&x,params) - fy);
     if (l > lold)
        step = -step/10;
     p += step;
@@ -2129,7 +2315,8 @@ Int_t langaupro(Double_t *params, Double_t &maxx, Double_t &FWHM) {
     i++;
     lold = l;
     x = p + step;
-    l = TMath::Abs(langaufun(&x,params) - fy);
+    if (strcmp(function, "langaus") == 0) l = TMath::Abs(langaufun(&x,params) - fy);
+    if (strcmp(function, "lingaus") == 0) l = TMath::Abs(lingaufun(&x,params) - fy);
     if (l > lold)
        step = -step/10;
     p += step;
@@ -2183,13 +2370,14 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
   int n;
   if (strcmp(func, "gaus")==0){n = 3;}
   else if (strcmp(func, "multigaus")==0){n = 3;}
-  else if (strcmp(func, "langaus")==0){n = 6;}
+  else if (strcmp(func, "langaus")==0){n = 4;}
+  else if (strcmp(func, "lingaus")==0){n = 4;}
   else if (strcmp(func, "langaus_roofit")==0){n = 6;}
-  else{ printf("ERROR (fit_hist): Wrong fit function name passed! Currently available: gaus, multigaus, langaus.\n"); }
+  else{ printf("ERROR (fit_hist): Wrong fit function name passed! Currently available: gaus, multigaus, langaus, lingaus.\n"); }
   // Check if the histograms were filled
   if ( (int) hist->Integral() < 2 ){
     if (is_in_string(VERBOSE, "h")){
-      printf("WARNING (fit_hist: %s): Histogram empty!\n", func);     
+      printf("WARNING (fit_hist: %s): Histogram empty (Integral=%d!\n", func, (int)hist->Integral());     
     }
     for (int i = 0; i<n+2; i++){
       params.push_back(1.);
@@ -2224,6 +2412,52 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
       params.push_back(fit->GetParError(i));
     }
     return(params);  
+  }
+  // Langaus (landau convoluted with gaus) fit
+  if (strcmp(func, "lingaus")==0){
+    n = 4;
+    // Rebin a temp histogram before fitting
+    Int_t nrebin = 50;
+    int errors = 0;
+    // Setting fit range and start values
+    hist->Rebin(nrebin);
+    // Double_t divide = hist->GetXaxis()->GetXmax() / hist->GetNbinsX();
+    // Double_t largest_bin = largest_1Dbin(hist, 0, 1000); // heaviest bin between lower and upper bound
+    // printf("%3.1f\n", largest_bin);
+    Double_t fr[2]; // fit boundaries
+    Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4]; 
+    fr[0]=lower; // Lower fit boundary
+    fr[1]=upper; // Upper fit boundary
+    // fr[0]=0.65*largest_bin; // Lower fit boundary
+    // fr[1]=3.0*largest_bin; // Upper fit boundary
+    // printf("%3.3f %3.3f %3.3f %3.3f\n", largest_bin, fr[0], fr[1], divide);
+
+    //Fit parameters:
+    //par[0]=Width (scale) parameter of Gaus density
+    //par[1]=Most Probable (MP, location) parameter of Gaus density
+    //par[2]=Amplitude
+    //par[3]=Ntot of the linearization function
+    // ALL VALUES IN MeV or RELATED VALUES
+    pllo[0]=1      ; pllo[1]=0               ; pllo[2]=1.0;  pllo[3]=0.01; 
+    plhi[0]=100.   ; plhi[1]=1000            ; plhi[2]=1e6; plhi[3]=1e5; 
+      sv[0]=5.    ;    sv[1]=50              ;   sv[2]=5e3;    sv[3] =5e3; 
+    Double_t chisqr; // Chi squared
+    Int_t ndf; // # degrees of freedom
+    bool silent = true;
+    if (is_in_string(VERBOSE, "f")) silent = false; 
+    fit = lingaufit(hist,fr,sv,pllo,plhi,fp,fpe,&chisqr,&ndf, silent); // true/false for quite mode
+    Double_t SNRPeak, SNRFWHM; 
+    errors = langaupro(fp,SNRPeak,SNRFWHM, "lingaus"); // Search for peak and FWHM
+    if (errors != 0) printf("WARNING(fit_hist): ERROR(langaupro): %d\n", errors);
+    // Save the parameters in the return container
+    for (int i = 0; i<n; i++){ 
+      params.push_back(fp[i]);
+      params.push_back(fpe[i]);
+    }
+    // Add the parameters from the langaupro search
+    params.push_back(SNRPeak); params.push_back(SNRFWHM/2);
+    printf("%3.3f\n", SNRPeak);
+    return(params);
   }
   // Multigaus: uses peaksensing to find peaks in a histgrams and then fits them with a superposition of gaussians
   if (strcmp(func, "multigaus")==0){
@@ -2274,11 +2508,11 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     // Setting fit range and start values
     hist->Rebin(nrebin);
     Double_t divide = hist->GetXaxis()->GetXmax() / hist->GetNbinsX();
-    Double_t largest_bin = largest_1Dbin(hist, 2000*GENERAL_SCALING/divide, 80000*GENERAL_SCALING/nrebin)*divide*GENERAL_SCALING; // heaviest bin between lower and upper bound
+    Double_t largest_bin = largest_1Dbin(hist, 20*GENERAL_SCALING/divide, 800*GENERAL_SCALING/nrebin)*divide*GENERAL_SCALING; // heaviest bin between lower and upper bound
     // printf("%3.1f\n", largest_bin);
     Double_t fr[2]; // fit boundaries
     Double_t sv[4], pllo[4], plhi[4], fp[4], fpe[4]; 
-    fr[0]=0.75*largest_bin; // Lower fit boundary
+    fr[0]=0.65*largest_bin; // Lower fit boundary
     fr[1]=3.0*largest_bin; // Upper fit boundary
     printf("%3.3f %3.3f %3.3f %3.3f\n", largest_bin, fr[0], fr[1], divide);
 
@@ -2291,16 +2525,17 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
     //par[5]=m from A/(x^(m))
     //ADDED LATER: par[6]= Maximum of convoluted function
     //ADDED LATER: par[7]= FWHM of convoluted function
-    pllo[0]=100      ; pllo[1]=largest_bin-250.; pllo[2]=1.0; pllo[3]=100.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
-    plhi[0]=1000.   ; plhi[1]=largest_bin+500.; plhi[2]=1e12; plhi[3]=5000.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
-    sv[0]  =200.    ; sv[1]  =largest_bin      ; sv[2]  =5e7 ; sv[3]  =500.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
+    // ALL VALUES IN MeV or RELATED VALUES
+    pllo[0]=1      ; pllo[1]=largest_bin-2.50; pllo[2]=1.0; pllo[3]=1.     ;// pllo[4]=-10.0 ; pllo[5]=0.0001;  // Lower parameter limits
+    plhi[0]=10.   ; plhi[1]=largest_bin+2.50; plhi[2]=1e10; plhi[3]=50.0;// plhi[4]=100000.0; plhi[5]=5.0; // Upper parameter limits
+    sv[0]  =2.    ; sv[1]  =largest_bin      ; sv[2]  =5e3 ; sv[3]  =5.0 ;// sv[4]  =100.0   ; sv[5]=0.05;// Start values
     Double_t chisqr; // Chi squared
     Int_t ndf; // # degrees of freedom
     bool silent = true;
     if (is_in_string(VERBOSE, "f")) silent = false; 
     fit = langaufit(hist,fr,sv,pllo,plhi,fp,fpe,&chisqr,&ndf, silent); // true/false for quite mode
     Double_t SNRPeak, SNRFWHM; 
-    errors = langaupro(fp,SNRPeak,SNRFWHM); // Search for peak and FWHM
+    errors = langaupro(fp,SNRPeak,SNRFWHM, "langaus"); // Search for peak and FWHM
     if (errors != 0) printf("WARNING(fit_hist): ERROR(langaupro): %d\n", errors);
     // Save the parameters in the return container
     for (int i = 0; i<n; i++){ 
@@ -2308,7 +2543,8 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
       params.push_back(fpe[i]);
     }
     // Add the parameters from the langaupro search
-    params.push_back(SNRPeak); params.push_back(SNRFWHM);
+    params.push_back(SNRPeak); params.push_back(SNRFWHM/2);
+    printf("%3.3f\n", SNRPeak);
     return(params);
   }
   // Novosibirsk function
@@ -2445,7 +2681,7 @@ vector<Double_t> fit_hist(TH1D *hist, TF1 *fit, char const *func, Double_t lower
   else {return(params);}
 }
 
-vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t lower, Double_t upper, int verbose){
+vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, char const *options, Double_t lower, Double_t upper, int verbose){
   //
   //
   vector<Double_t> params;
@@ -2460,7 +2696,7 @@ vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t l
     // printf("%3.3f\n", par[0]);
     fit->SetParameters(par);
     fit->SetParNames("N_tot");
-    graph->Fit("SIPMpixel_fit", "R", "SAME", lower, upper);
+    graph->Fit("SIPMpixel_fit", options, "", lower, upper);
 
     for (int i = 0; i < n; i ++){
       params.push_back(fit->GetParameter(i));
@@ -2494,7 +2730,7 @@ vector<Double_t> fit_graph_err(TGraphErrors *graph, char const *func, Double_t l
     }
 
     //
-    graph->Fit("Resolution_fit", "R", "SAME", lower, upper);
+    graph->Fit("Resolution_fit", options, "", lower, upper);
 
     for (int i = 0; i < n; i ++){
       params.push_back(fit->GetParameter(i));
@@ -2544,11 +2780,18 @@ vector<double> FIR_filter(vector<double> &trace, double calib){
   // Return array
   vector<double> filtered;
   // Number of tabs
-  nTabs = (int)FIR_COEF.size();
+  int nTabs = (int)FIR_COEF.size();
+  // Shift signal by half the amount of nTabs used
+  int shift = 0;
+  if (nTabs%2 != 0){
+    printf("WARNING(FIR_filter): Number of FIR tabs must be even!\n");
+    shift = (nTabs+1)/2;
+  } 
+  else shift = nTabs/2;
   // total sum
   double sum = 0.;
   // For each sample of the trace
-  for (int n = 0; n < (int)trace.size(); n++){
+  for (int n = shift; n < (int)trace.size(); n++){
     // reset the sum
     sum = 0.;
     // For each tab
@@ -2561,7 +2804,14 @@ vector<double> FIR_filter(vector<double> &trace, double calib){
     sum *= calib;
     filtered.push_back(sum);
   }
+  // Fill the rest of the signal with 0
+  for (int n = (int)filtered.size(); n < (int)trace.size(); n++){
+    filtered.push_back(0.0);
+  }
+  // Shift trace by the number of taps to the left but keep amplitude multiplier at 1.0
+  vector<double> x; x.push_back(1.0); x.push_back(-nTabs);
   return filtered;
+  // return {array_adjust(filtered, x, 0)};
 }
 
 // Moving average Filter
@@ -2670,9 +2920,10 @@ void build_structure(){
   //
   hfile->mkdir("ENERGY");
   hfile->mkdir("ENERGY/PULSE_HIGHT");
-  hfile->mkdir("ENERGY/PULSE_HIGHT/RAW");
+  hfile->mkdir("ENERGY/PULSE_HIGHT/RAW/BASELINE_STATS");
   hfile->mkdir("ENERGY/PULSE_HIGHT/RAW/Intersampling_calibration");
   hfile->mkdir("ENERGY/PULSE_HIGHT/RAW_CALIB");
+  hfile->mkdir("ENERGY/PULSE_HIGHT/RAW_CALIB/BASELINE_STATS");
   hfile->mkdir("ENERGY/PULSE_HIGHT/MA");
   hfile->mkdir("ENERGY/PULSE_HIGHT/MWD");
   hfile->mkdir("ENERGY/PULSE_HIGHT/TMAX");
@@ -2867,18 +3118,21 @@ bool read_config(const char *file){
         if(strcmp(key.c_str(), "SAMPLE_t") == 0) SAMPLE_t = stoi(value);
         if(strcmp(key.c_str(), "VERBOSE") == 0){ strcpy(VERBOSE, value.c_str());} 
         if(strcmp(key.c_str(), "MODE") == 0){ strcpy(MODE, value.c_str());} 
+        if(strcmp(key.c_str(), "VALIDITY") == 0){ strcpy(VALIDITY, value.c_str());} 
         if(strcmp(key.c_str(), "N_E_WINDOW") == 0) N_E_WINDOW = stoi(value);
         if(strcmp(key.c_str(), "E_WINDOW_LEFT") == 0) E_WINDOW_LEFT = stoi(value);
         if(strcmp(key.c_str(), "E_WINDOW_RIGHT") == 0) E_WINDOW_RIGHT = stoi(value);
         if(strcmp(key.c_str(), "BASELINE_CUT") == 0) BASELINE_CUT = stoi(value);
         if(strcmp(key.c_str(), "ZERO_XING_CUT") == 0) ZERO_XING_CUT = stoi(value);
         if(strcmp(key.c_str(), "ENERGY_WINDOW_MAX") == 0) ENERGY_WINDOW_MAX = stoi(value);
-        if(strcmp(key.c_str(), "ENERGY_NORM") == 0) ENERGY_NORM = stoi(value);
+        if(strcmp(key.c_str(), "ENERGY_NORM") == 0) ENERGY_NORM = stod(value);
         if(strcmp(key.c_str(), "N_INTPOL_SAMPLES") == 0) N_INTPOL_SAMPLES = stoi(value);
         if(strcmp(key.c_str(), "NB") == 0) NB = stoi(value);
         if(strcmp(key.c_str(), "COINC_LEVEL") == 0) COINC_LEVEL = stoi(value);
         if(strcmp(key.c_str(), "EXTRACT_PROTO") == 0) EXTRACT_PROTO = stoi(value);
         if(strcmp(key.c_str(), "LIN_COMP") == 0) LIN_COMP = stod(value);
+        if(strcmp(key.c_str(), "ENERGY_CUT") == 0) ENERGY_CUT = stod(value);
+        if(strcmp(key.c_str(), "SATURATION_TH") == 0) SATURATION_TH = stod(value);
         // if(strcmp(key.c_str(), "MULTIS") == 0) MULTIS = stoi(value);
         if(strcmp(key.c_str(), "THRESHOLD_MULTIPLICY") == 0) THRESHOLD_MULTIPLICY = stod(value);
         if(strcmp(key.c_str(), "SATURATION_FILTER") == 0) SATURATION_FILTER = stoi(value);
@@ -3102,8 +3356,8 @@ bool is_glitch(vector<double> &trace, double TH, int n){
   for(int k=n; k<n+GLITCH_FILTER_RANGE; k++){
     // If k-th sample is greater than TH, then save 0 in array
     // Test with RAW signal because RAW_CALIB is not yet calculated
-    if ( trace[k] > TH){ // Either test if above TH or above 0, depending on noise level
-    // if ( trace[k] > 0){
+    // if ( trace[k] > TH ){ // Either test if above TH or above 0, depending on noise level
+    if ( trace[k] > 0){
       is_glitch_array[k-n] = 1;
     }
     // If not, then set it save 1 in array
@@ -3135,7 +3389,7 @@ bool is_saturation(signal_struct &signal, int n){
 	int rising_left = 0;
 	int rising_right = n;
 	int rising_start = 100; // powerful, but use carefully
-	double sat_threshold = 10000;
+	double sat_threshold = SATURATION_TH;
 	// Search for the rising edge crossing the kth % of the maximum
 	for (int i = 0; i < ENERGY_WINDOW_MAX; i++){
 		if ( signal.trace[i] > fraction * max) {
@@ -3206,6 +3460,7 @@ bool baseline_weird(signal_struct &signal){
 		// 3: Trace is not not above TH
     // 4: Baseline is weird
     // 5: Maximum not in energy range
+    // 6: signal pulseheight/ratio is off
 int is_valid_max(signal_struct &signal, int n){
 	// Test if the current sample is larger than the max energy
   if(signal.trace[n] > signal.base.TH){
@@ -3241,7 +3496,7 @@ int is_valid_max(signal_struct &signal, int n){
       return(0);
     }
   }
-  return(3);
+  else{return(3);}
 }
 
 // returns integral of a signal (but not over/under-shoot)
@@ -3339,13 +3594,16 @@ Double_t SIPMpixel(Double_t *x, Double_t *par){
   return value;
 }
 
-// Fit function for pixel saturation
+// Compensation function for pixel saturation
 Double_t SIPMlinearize(Double_t x, Double_t A){
   // Parameter carriers
   // par[0]: corresponds to total amount of pixels, N_total
   // x: N of pixels fired 
-  double value = - A * log( 1 - ( x / A ) );
-  return value;
+  if ( x/A > 1 ) return (0.0);
+  else {
+    double value = - A * log( 1 - ( x / A ) );
+    return value;
+  }
 }
 
 // Energy  and time resolution fit
@@ -3508,7 +3766,92 @@ vector<double> array_simulate_proto(){
 
   //
   hfile->cd("JUNK");
-  plot_trace(ch07, "ch07", "AL*");
-  plot_trace(ch12, "ch12", "AL*");
+  plot_trace(ch07, "ch07", "JUNK", "AL*");
+  plot_trace(ch12, "ch12", "JUNK", "AL*");
   return ch12;
+}
+
+// Scale x or y axis of histogram
+//// Taken and modified from
+  // "https://root-forum.cern.ch/t/can-we-shift-histogram-for-several-channels/12050/2"
+
+Double_t ScaleX(Double_t x, vector<double> par, const char *modus)
+{
+  Double_t v;
+  if (strcmp("linear", modus) == 0) v = par[0] * x + par[1]; // "linear scaling" function example
+  if (strcmp("SIPMlinearize", modus) == 0){
+    v = SIPMlinearize(x, par[0]); // SiPMLinerization
+  }
+  return v;
+}
+
+Double_t ScaleY(Double_t y, vector<double> par, const char *modus)
+{
+  Double_t v;
+  if (strcmp("linear", modus) == 0) v = par[0] * y + par[1]; // "linear scaling" function example
+  if (strcmp("SIPMlinearize", modus) == 0) v = SIPMlinearize(y, par[0]); // SiPMLinerization
+  return v;
+}
+
+Double_t ScaleZ(Double_t z, vector<double> par, const char *modus)
+{
+  Double_t v;
+  if (strcmp("linear", modus) == 0) v = par[0] * z + par[1]; // "linear scaling" function example
+  if (strcmp("SIPMlinearize", modus) == 0) v = SIPMlinearize(z, par[0]); // SiPMLinerization
+  return v;
+}
+
+void ScaleAxis(TAxis *a, Double_t (*Scale)(Double_t, vector<double>, const char*), vector<double> par, const char *modus)
+{
+  if (!a) return; // just a precaution
+  if (a->GetXbins()->GetSize())
+    {
+      // an axis with variable bins
+      // note: bins must remain in increasing order, hence the "Scale"
+      // function must be strictly (monotonically) increasing
+      TArrayD X(*(a->GetXbins()));
+      for(Int_t i = 0; i < (int)X.GetSize(); i++) {
+        X[i] = Scale(X[i], par, modus);
+      }
+      printf("\n");
+      a->Set((X.GetSize() - 1), X.GetArray()); // new Xbins
+    }
+  else
+    {
+      // an axis with fix bins
+      // note: we modify Xmin and Xmax only, hence the "Scale" function
+      // must be linear (and Xmax must remain greater than Xmin)
+      if (strcmp(modus, "linear") == 0){
+        // printf("Xmin: %3.3f, Xmax: %3.3f\n", Scale(a->GetXmin(), par, modus), Scale(a->GetXmax(), par, modus));
+        a->Set( a->GetNbins(),
+          Scale(a->GetXmin(), par, modus), // new Xmin
+          Scale(a->GetXmax(), par, modus) 
+          ); // new Xmax
+      }
+    }
+  return;
+}
+
+void ScaleXaxis(TH1D *h, Double_t (*Scale)(Double_t, vector<double>, const char*), vector<double> par, const char *modus)
+{
+  if (!h) return; // just a precaution
+  ScaleAxis(h->GetXaxis(), Scale, par, modus);
+  h->ResetStats();
+  return;
+}
+
+void ScaleYaxis(TH1D *h, Double_t (*Scale)(Double_t, vector<double>, const char*), vector<double> par, const char *modus)
+{
+  if (!h) return; // just a precaution
+  ScaleAxis(h->GetYaxis(), Scale, par, modus);
+  h->ResetStats();
+  return;
+}
+
+void ScaleZaxis(TH1D *h, Double_t (*Scale)(Double_t, vector<double>, const char*), vector<double> par, const char *modus)
+{
+  if (!h) return; // just a precaution
+  ScaleAxis(h->GetZaxis(), Scale, par, modus);
+  h->ResetStats();
+  return;
 }

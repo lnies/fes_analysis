@@ -28,7 +28,7 @@ int ZERO_XING_CUT=70;
 int ENERGY_WINDOW_MAX = 100;  
 Int_t N_INTPOL_SAMPLES = 10; // must be even
 Int_t NB = 2;
-Int_t ENERGY_NORM = 2500; // Cosmis peak will be normed to this channel
+double ENERGY_NORM = 25.0; // Cosmis peak will be normed to this channel
 int NB_ACT_CHANNELS = 0; // Number of active channels
 double GENERAL_SCALING = 1.; // General histogram scaling for energy calibration
 int EXTRACT_PROTO=1; // Extract proto trace and save it to file
@@ -52,6 +52,8 @@ vector<double> FIR_COEF; // Array for the FIR filter coefficients
 double LIN_COMP = 0.; // Fit Parameter for linearizing the detector energy sum
 // global counters
 unsigned int NOE=0;
+// Decicion making parameter for beam mode
+char VALIDITY[100];
 
 ReadSystem_class DETECTOR;
 
@@ -84,4 +86,17 @@ vector<vector<mapping_struct> > MAPPING;
 tagger_struct TAGGER;
 // Container for costum multiplicities
 vector<double> TH_MULTIPLICITY;
+// Energy cut: Energy below is cut
+double ENERGY_CUT = 0;
+// Saturation threshold in channel
+int SATURATION_TH = 1000000;
+// Filter Statistics
+  // 0: Is valid max 
+  // 1: Glitch detected 
+  // 2: Saturation detected 
+  // 3: Trace is not not above TH
+  // 4: Baseline is weird
+  // 5: Maximum not in energy range
+  // 6: Outside area/signal ratio
+int FILTER_EFFICIENCY[7] = {0,0,0,0,0,0,0}; 
 

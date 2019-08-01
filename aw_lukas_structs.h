@@ -40,6 +40,12 @@ struct calib_struct
   hist_struct_TH1D h_MWD_energy;
   hist_struct_TH1D h_TMAX_energy;
   hist_struct_TH1D h_NMO_energy;
+  // Histograms for the Gaussian resolution from the plot
+  hist_struct_TH1D h_RAW_resolution; // hist the calibration parameters
+  hist_struct_TH1D h_MA_resolution;
+  hist_struct_TH1D h_MWD_resolution;
+  hist_struct_TH1D h_TMAX_resolution;
+  hist_struct_TH1D h_NMO_resolution;
 };
 
 struct multis_norm_struct
@@ -153,5 +159,59 @@ struct tagger_struct
   vector<hist_struct_TH1D> t_hist; // Histogram for tagger timing distribution
   hist_struct_TH2D h_tagger_vs_energy; // Tagger time vs energy in ECAL
   int cut[16]; // Mean tagger time for cutting times off the mean time
-  double energy[16] = {41.3,44.8,51.6,69.14,79.3,99.8,149.37,200.,249.8,350.0,450.2,550.37,650.3,699.7,724.4,725.5}; // Energies corresponding to each tagger channel
+  // double energy[16] = {
+  //   41.3,
+  //   44.8,
+  //   51.6,
+  //   69.14,
+  //   79.3,
+  //   99.8,
+  //   149.37,
+  //   200.,
+  //   249.8,
+  //   350.0,
+  //   450.2,
+  //   550.37,
+  //   650.3,
+  //   699.7,
+  //   724.4,
+  //   725.5
+  // }; // Energies corresponding to each tagger channel (Markus' calculation)
+  double energy[16] = {
+     36.533,
+     39.801,
+     46.605,
+     65.295,
+     75.283,
+     96.882,
+    148.820,
+    201.354,
+    253.761,
+    358.670,
+    461.649,
+    563.572,
+    663.221,
+    711.502,
+    735.203,
+    736.167
+  }; // Energies corresponding to each tagger channel (Phillippe's calculation)
+  double energy_err[16] = { // Has to be divided by two!
+    3.359,
+    3.371,
+    3.383,
+    3.333,
+    3.348,
+    3.298,
+    3.179,
+    3.035,
+    2.871,
+    2.485,
+    2.094,
+    1.736,
+    1.358,
+    1.162,
+    1.015,
+    0.999
+  }; // Energies errors corresponding to each tagger channel (Phillippe's calculation)
+  hist_struct_TH1D h_stats; // Histogram of the counting statistics
 };

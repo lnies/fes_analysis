@@ -236,9 +236,9 @@ int main(int argc, char *argv[])
     sprintf(outputfile_energy_calib, "%s_energy_calib.txt", outputfile);
     energy_out = new ofstream(outputfile_energy_calib);
     if (energy_out->is_open()){
-      printf("NOTICE(main): Opened proto trace output file %s.\n", outputfile_energy_calib);
+      printf("NOTICE(main): Opened energy calibration output file %s.\n", outputfile_energy_calib);
     }
-    else printf("WARNING(statistics): Unable to write proto trace file.\n");
+    else printf("WARNING(statistics): Unable to write energy calibration file.\n");
   }
 
   // array_simulate_proto();
@@ -638,6 +638,7 @@ void extraction(){
   // 
   // In beam mode first check if the central crystal is healthy
   int central_healty = 0;
+  int valid_max = 0;
   // Left and Right borders for maximum detection
   int left = BASELINE_CUT * RAW_CALIB[0].multis;
   int right = ENERGY_WINDOW_MAX * RAW_CALIB[0].multis;
@@ -647,15 +648,37 @@ void extraction(){
     RAW_CALIB[CENTRAL].energy = RAW_CALIB[CENTRAL].trace[RAW_CALIB[CENTRAL].energy_n];
     RAW_CALIB[CENTRAL].integral = signal_integral(RAW_CALIB[CENTRAL], 0);
     RAW_CALIB[CENTRAL].ratio = RAW_CALIB[CENTRAL].integral / RAW_CALIB[CENTRAL].energy;
-    if ( is_valid_max( RAW_CALIB[CENTRAL], RAW_CALIB[CENTRAL].energy_n ) == 0 ){
+    //
+    TMAX[CENTRAL].energy_n = array_largest(TMAX[CENTRAL].trace, left, right);
+    TMAX[CENTRAL].energy = TMAX[CENTRAL].trace[TMAX[CENTRAL].energy_n];
+    TMAX[CENTRAL].integral = signal_integral(TMAX[CENTRAL], 0);
+    TMAX[CENTRAL].ratio = TMAX[CENTRAL].integral / TMAX[CENTRAL].energy;
+    TMAX[CENTRAL].is_signal = 1;
+    TMAX[CENTRAL].CFD.Xzero = array_zero_xing(TMAX[CENTRAL].CFD.trace, ZERO_XING_CUT*TMAX[CENTRAL].multis, array_largest(TMAX[CENTRAL].CFD.trace, 0, 1E5), -1);
+    
+    if (strcmp("RAW_CALIB", VALIDITY) == 0) valid_max = is_valid_max( RAW_CALIB[CENTRAL], RAW_CALIB[CENTRAL].energy_n );
+    if (strcmp("TMAX", VALIDITY) == 0) valid_max = is_valid_max( TMAX[CENTRAL], TMAX[CENTRAL].energy_n );
+    
+    //
+    if ( valid_max == 0 ){
+      // printf("%3.3f\n", TMAX[CENTRAL].ratio);
       if ( RAW_CALIB[CENTRAL].ratio < UPPER_RATIO && RAW_CALIB[CENTRAL].ratio > LOWER_RATIO){
+      // if ( RAW_CALIB[CENTRAL].ratio < UPPER_RATIO && RAW_CALIB[CENTRAL].ratio > LOWER_RATIO){
         RAW_CALIB[CENTRAL].is_signal = 1;
         central_healty = 1;
+        FILTER_EFFICIENCY[0]++;
       }
-      else central_healty = 0;
+      else {
+        central_healty = 0;
+        plot = 6;
+        FILTER_EFFICIENCY[6]++;
+      }
     }
-    else central_healty = 0;
-
+    else {
+      central_healty = 0;
+      plot = valid_max;
+      FILTER_EFFICIENCY[valid_max]++;
+    }
   }
   else central_healty = 1;
 
@@ -676,8 +699,14 @@ void extraction(){
     // printf("%3.1f %3.1f %d\n", RAW_CALIB[i].energy, RAW_CALIB[i].base.TH, RAW_CALIB[i].energy_n);
 
     // printf("%d %3.3f %3.3f %3.3f %d\n", RAW_CALIB[i].energy_n, RAW_CALIB[i].energy, RAW_CALIB[i].integral, RAW_CALIB[i].ratio, is_valid_max( RAW_CALIB[i], RAW_CALIB[i].energy_n ));
+    TMAX[i].energy_n = array_largest(TMAX[i].trace, TMAX[i].multis*BASELINE_CUT, TMAX[i].multis*ENERGY_WINDOW_MAX); // sample number of largest sample
+    TMAX[i].energy = TMAX[i].trace[TMAX[i].energy_n];
+    TMAX[i].integral = signal_integral(TMAX[i], 0);
+    TMAX[i].ratio = TMAX[i].integral / TMAX[i].energy;
+    TMAX[i].CFD.Xzero = array_zero_xing(TMAX[i].CFD.trace, ZERO_XING_CUT*TMAX[i].multis, array_largest(TMAX[i].CFD.trace, 0, 1E5), -1);
 
     // Search for maximum and check if valid
+    // Decide which filter type to chose for making the validity decicion
     if ( is_valid_max( RAW_CALIB[i], RAW_CALIB[i].energy_n ) == 0 && central_healty == 1 ){ // The maximum is valid
       // Signal is good
       RAW_CALIB[i].is_signal = 1;
@@ -714,15 +743,14 @@ void extraction(){
       //
       TMAX[i].energy_n = array_largest(TMAX[i].trace, left, right);
       // printf("%d %d\n", TMAX[i].energy_n, (int)TMAX[i].trace.size());
-      if ( is_valid_max( TMAX[i], TMAX[i].energy_n ) == 0 ){
+      // if ( is_valid_max( TMAX[i], TMAX[i].energy_n ) == 0 ){
         TMAX[i].energy = TMAX[i].trace[TMAX[i].energy_n];
         TMAX[i].integral = signal_integral(TMAX[i], 0);
         TMAX[i].ratio = TMAX[i].integral / TMAX[i].energy;
         TMAX[i].is_signal = 1;
         TMAX[i].CFD.Xzero = array_zero_xing(TMAX[i].CFD.trace, ZERO_XING_CUT*TMAX[i].multis, array_largest(TMAX[i].CFD.trace, 0, 1E5), -1);
-
-      }
-      else{ TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;}
+      // }
+      // else{ TMAX[i].energy = 0; TMAX[i].integral = 0; TMAX[i].ratio = 0; TMAX[i].is_signal = 0;}
       // printf("%d %d %d %d \n", RAW_CALIB[i].CFD.Xzero, MA[i].CFD.Xzero, MWD[i].CFD.Xzero, TMAX[i].CFD.Xzero );
 
       // For the sake of computational efficiency, only do the Nelder-Mead optimization for signal events
@@ -747,13 +775,13 @@ void extraction(){
 
         vector<double> weights;
 
-        for (int n = 0; n < 100; n++){
+        for (int n = 0; n < 90; n++){
           weights.push_back(1);
         }
         for (int n = 100; n < 120; n++){
           weights.push_back(10);
         }
-        for (int n = 120; n < (int)RAW_CALIB[i].trace.size(); n++){
+        for (int n = 110; n < (int)RAW_CALIB[i].trace.size(); n++){
           weights.push_back(1);
         }
 
@@ -981,11 +1009,11 @@ void extraction(){
           TMAX[i].tagged[k].integral = TMAX[i].integral;
           NMO[i].tagged[k].integral = NMO[i].integral;
           //
-          ECAL25[0].tagged[k].energy += RAW_CALIB[i].energy;
-          ECAL25[1].tagged[k].energy += MA[i].energy;
-          ECAL25[2].tagged[k].energy += MWD[i].energy;
-          ECAL25[3].tagged[k].energy += TMAX[i].energy;
-          ECAL25[4].tagged[k].energy += NMO[i].energy;
+          if (RAW_CALIB[i].tagged[k].energy > ENERGY_CUT) ECAL25[0].tagged[k].energy += RAW_CALIB[i].tagged[k].energy;
+          if (MA[i].tagged[k].energy > ENERGY_CUT)        ECAL25[1].tagged[k].energy += MA[i].tagged[k].energy;
+          if (MWD[i].tagged[k].energy > ENERGY_CUT)       ECAL25[2].tagged[k].energy += MWD[i].tagged[k].energy;
+          if (TMAX[i].tagged[k].energy > ENERGY_CUT)      ECAL25[3].tagged[k].energy += TMAX[i].tagged[k].energy;
+          if (NMO[i].tagged[k].energy > ENERGY_CUT)       ECAL25[4].tagged[k].energy += NMO[i].tagged[k].energy;
           //
           ECAL25[0].tagged[k].integral += RAW_CALIB[i].integral;
           ECAL25[1].tagged[k].integral += MA[i].integral;
@@ -1023,11 +1051,11 @@ void extraction(){
           TMAX[i].tagged[k].integral_m = TMAX[i].integral;
           NMO[i].tagged[k].integral_m = NMO[i].integral;
           //
-          ECAL25[0].tagged[k].energy_m += RAW_CALIB[i].tagged[k].energy_m;
-          ECAL25[1].tagged[k].energy_m += MA[i].tagged[k].energy_m;
-          ECAL25[2].tagged[k].energy_m += MWD[i].tagged[k].energy_m;
-          ECAL25[3].tagged[k].energy_m += TMAX[i].tagged[k].energy_m;
-          ECAL25[4].tagged[k].energy_m += NMO[i].tagged[k].energy_m;
+          if (RAW_CALIB[i].tagged[k].energy_m > ENERGY_CUT) ECAL25[0].tagged[k].energy_m += RAW_CALIB[i].tagged[k].energy_m;
+          if (MA[i].tagged[k].energy_m > ENERGY_CUT)        ECAL25[1].tagged[k].energy_m += MA[i].tagged[k].energy_m;
+          if (MWD[i].tagged[k].energy_m > ENERGY_CUT)       ECAL25[2].tagged[k].energy_m += MWD[i].tagged[k].energy_m;
+          if (TMAX[i].tagged[k].energy_m > ENERGY_CUT)      ECAL25[3].tagged[k].energy_m += TMAX[i].tagged[k].energy_m;
+          if (NMO[i].tagged[k].energy_m > ENERGY_CUT)       ECAL25[4].tagged[k].energy_m += NMO[i].tagged[k].energy_m;
           //
           ECAL25[0].tagged[k].integral_m += RAW_CALIB[i].tagged[k].integral_m;
           ECAL25[1].tagged[k].integral_m += MA[i].tagged[k].integral_m;
@@ -1068,11 +1096,11 @@ void extraction(){
           TMAX[i].tagged[k].integral_mt = TMAX[i].integral;
           NMO[i].tagged[k].integral_mt = NMO[i].integral;
           //
-          ECAL25[0].tagged[k].energy_mt += RAW_CALIB[i].tagged[k].energy_mt;
-          ECAL25[1].tagged[k].energy_mt += MA[i].tagged[k].energy_mt;
-          ECAL25[2].tagged[k].energy_mt += MWD[i].tagged[k].energy_mt;
-          ECAL25[3].tagged[k].energy_mt += TMAX[i].tagged[k].energy_mt;
-          ECAL25[4].tagged[k].energy_mt += NMO[i].tagged[k].energy_mt;
+          if (RAW_CALIB[i].tagged[k].energy_mt > ENERGY_CUT) ECAL25[0].tagged[k].energy_mt += RAW_CALIB[i].tagged[k].energy_mt;
+          if (MA[i].tagged[k].energy_mt > ENERGY_CUT)        ECAL25[1].tagged[k].energy_mt += MA[i].tagged[k].energy_mt;
+          if (MWD[i].tagged[k].energy_mt > ENERGY_CUT)       ECAL25[2].tagged[k].energy_mt += MWD[i].tagged[k].energy_mt;
+          if (TMAX[i].tagged[k].energy_mt > ENERGY_CUT)      ECAL25[3].tagged[k].energy_mt += TMAX[i].tagged[k].energy_mt;
+          if (NMO[i].tagged[k].energy_mt > ENERGY_CUT)       ECAL25[4].tagged[k].energy_mt += NMO[i].tagged[k].energy_mt;
           //
           ECAL25[0].tagged[k].integral_mt += RAW_CALIB[i].tagged[k].integral_mt;
           ECAL25[1].tagged[k].integral_mt += MA[i].tagged[k].integral_mt;
@@ -1210,18 +1238,63 @@ void extraction(){
 
   } 
 
-  if (plot == true){
-    printf("PLOTTED\n");
-    hfile->cd("JUNK/");
-    plot_waves_compare("PLOT1", "TRACE");
+  // 0: Is valid max 
+  // 1: Glitch detected 
+  // 2: Saturation detected 
+  // 3: Trace is not not above TH
+  // 4: Baseline is weird
+  // 5: Maximum not in energy range
+  // 6: Outside area/signal ratio
+
+
+  if (plot == 1){
+    // printf("PLOTTED_1\n");
+    // plot_trace(RAW_CALIB[CENTRAL].trace, "GLITCH", "JUNK", "");
     // for (int i = 0; i < (int)RAW_CALIB[7].trace.size(); i++){
     //   printf("%3.3f\n", RAW_CALIB[7].trace[i]);
     // }
     // printf("\n");
   }
   if (plot == 2){
-    hfile->cd("JUNK/");
-    plot_waves_compare("PLOT2", "TRACE");
+    // printf("PLOTTED_2\n");
+    // plot_trace(RAW_CALIB[CENTRAL].trace, "SATURATION", "JUNK", "");
+  }
+  if (plot == 4 ){
+    // printf("PLOTTED_4\n");
+    // plot_trace(RAW_CALIB[CENTRAL].trace, "BASELINE", "JUNK", "");
+  }
+
+
+  if (plot == 5 ){
+    // printf("PLOTTED_5\n");
+    // plot_trace(RAW_CALIB[CENTRAL].trace, "ENERGY_RANGE", "JUNK", "");
+  }
+
+  if (plot == 6 ){
+    // printf("PLOTTED_6\n");
+    // plot_trace(RAW_CALIB[CENTRAL].trace, "RATIO", "JUNK", "");
+  }
+  hfile->cd("JUNK");
+  if (TMAX[CENTRAL].tagged[0].energy_mt > 6000 ){
+    // printf("PLOTTED RANGE 25 - 34\n");
+    // plot_trace(TMAX[CENTRAL].trace, "Energy_n_80-100", "JUNK", "");
+    // plot_waves_compare("Bigger6000", "TRACE");
+  }
+  if (TMAX[CENTRAL].tagged[0].energy_mt < 6000 ){
+    // printf("PLOTTED RANGE 25 - 34\n");
+    // plot_trace(TMAX[CENTRAL].trace, "Energy_n_80-100", "JUNK", "");
+    // plot_waves_compare("Bigger6000", "TRACE");
+  }
+  if (TMAX[CENTRAL].energy_n > 100 &&  TMAX[CENTRAL].energy_n < 120){
+    // printf("PLOTTED RANGE 25 - 34\n");
+    // plot_trace(TMAX[CENTRAL].trace, "Energy_n_100-120", "JUNK", "");
+    // plot_waves_compare("Energy_n_100-120", "TRACE");
+
+  }
+  if (TMAX[CENTRAL].energy_n > 120 &&  TMAX[CENTRAL].energy_n < 150){
+    // printf("PLOTTED RANGE 25 - 34\n");
+    // plot_trace(TMAX[CENTRAL].trace, "Energy_n_120-150", "JUNK", "");
+    // plot_waves_compare("Energy_n_120-150", "TRACE");
   }
 
 
@@ -1592,6 +1665,12 @@ void print_final_statistics(){
     // Do the langaus fits for the energy histograms
     for (Int_t i = 0; i < (int)RAW_CALIB.size(); i++){
       if (RAW_CALIB[i].is_valid == false) continue;
+      // Scale histograms to MeV range
+      vector<double> lin_scaling; lin_scaling.push_back(0.01); lin_scaling.push_back(0.00);
+      ScaleXaxis(RAW_CALIB[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+      ScaleXaxis(MA[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+      ScaleXaxis(MWD[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+      ScaleXaxis(TMAX[i].h_energy.hist, ScaleX, lin_scaling, "linear");
       // fit the energy histograms
       RAW_CALIB[i].h_energy.params = fit_hist(RAW_CALIB[i].h_energy.hist, RAW_CALIB[i].h_energy.fit, "langaus");
       MA[i].h_energy.params = fit_hist(MA[i].h_energy.hist, MA[i].h_energy.fit, "langaus");
@@ -1601,16 +1680,40 @@ void print_final_statistics(){
       // NMO[i].h_energy.params = fit_hist(NMO[i].h_energy.hist, NMO[i].h_energy.fit, "langaus");
       // Fill the calibration parameters into the histogram
       if ( RAW_CALIB[i].h_energy.params[8] != 0 ){
+        // Fill hist
         CALIB.h_RAW_energy.hist->Fill((ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i]);
       }
       if ( TMAX[i].h_energy.params[8] != 0 ){
-        CALIB.h_TMAX_energy.hist->Fill((ENERGY_NORM/TMAX[i].h_energy.params[8])*CALIB.TMAX_energy[i]);
+        CALIB.h_TMAX_energy.hist->Fill((ENERGY_NORM/TMAX[i].h_energy.params[8])*(CALIB.TMAX_energy[i]*CALIB.RAW_energy[i]));
       }
       // Some runtime information
       if (is_in_string(VERBOSE,"p")){
         printf("+ Energy Fit for channel %d done.\n", i);
       }
+    }    
+    // Save the calibration parameter to a file
+    *energy_out << "RAW_CALIB_PARAMETERS" << endl;
+    for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+      *energy_out << "Channel_" << i << ";";
+      for (int t = 0; t < (int)RAW_CALIB[i].h_energy.params.size(); t++){
+        *energy_out << fixed << setprecision(2) << RAW_CALIB[i].h_energy.params[t] << ";";
+      }
+      //Also add the calibration parameter
+      *energy_out << fixed << setprecision(2) << (ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i];
+      *energy_out << endl;
     }
+    *energy_out << endl;
+    *energy_out << "TMAX_PARAMETERS" << endl;
+    for (int i = 0; i < (int)TMAX.size(); i++){
+      *energy_out << "Channel_" << i << ";";
+      for (int t = 0; t < (int)TMAX[i].h_energy.params.size(); t++){
+        *energy_out << fixed << setprecision(2) << TMAX[i].h_energy.params[t] << ";";
+      }
+      //Also add the calibration parameter
+      *energy_out << fixed << setprecision(2) << (ENERGY_NORM/TMAX[i].h_energy.params[8])*(CALIB.TMAX_energy[i]*CALIB.RAW_energy[i]);
+      *energy_out << endl;
+    }
+    energy_out->close();
     // Print Energy extraction 
     if (is_in_string(VERBOSE,"e")){
       // Statistics for the fit
@@ -1674,105 +1777,233 @@ void print_final_statistics(){
   //  BEAM MODE STATISTICS
   //
   if(strcmp(MODE, "BEAM") == 0) {
-    // Tagger energy statistics if verbose is set
-    int sum = 0;
-    if (is_in_string(VERBOSE, "g")){
-      printf("+++ Tagger Energy statistics +++\n");
-      printf("+Tagger #: total counts (multiple couts) (counts w/o multiples and w/ timing cut)\n");
-      for (int k = 0; k < TAG_CHANNELS; k++){
-        printf("+ Tagger %2d: %d (%d) (%d)\n", k, TAGGER.counts[k], TAGGER.multiples_per_channel[k], (Int_t) RAW_CALIB[CENTRAL].tagged[k].h_energy_mt.hist->Integral());
-        sum += TAGGER.counts[k];
-      }
-      printf("+\n+ Sum of all tagged channels: %d (includes multiples)\n", sum);
-      printf("+\n");
-      // Tagger multiplicity statistics
-      printf("+++ Multiple tagger counts +++\n");
-      for (int i = 0; i < TAG_CHANNELS; i++){
-        if (TAGGER.multiples_per_count[i] != 0) printf("+ %d events per tag: %2d\n", i, TAGGER.multiples_per_count[i]);
-      }
-      printf("+\n");
-      for (int k = 0; k < TAG_CHANNELS; k++){
-        printf("+ TAGGER ENERGY %2d:\n", k);
-        for (int a = 0; a<(int)MAPPING.size(); a++){
-          printf("-    ");
-          for (int b = 0; b<(int)MAPPING[a].size(); b++){
-            int ch = b*(int)MAPPING.size()+a; 
-            printf("%6d ", (Int_t) RAW_CALIB[ch].tagged[k].h_energy.hist->Integral());
-          }
-          printf("\n");
+  //   // Signal Filter statistics 
+  //   printf("+ SIGNAL FILTER STATISTICS\n");
+  //   printf("- Valid maxia   : %5d\n", FILTER_EFFICIENCY[0]);
+  //   printf("- Glitches      : %5d\n", FILTER_EFFICIENCY[1]);
+  //   printf("- Saturation    : %5d\n", FILTER_EFFICIENCY[2]);
+  //   printf("- Below TH      : %5d\n", FILTER_EFFICIENCY[3]);
+  //   printf("- Baseline weird: %5d\n", FILTER_EFFICIENCY[4]);
+  //   printf("- Max o.f. range: %5d\n", FILTER_EFFICIENCY[5]);
+  //   printf("- Ratio is off  : %5d\n", FILTER_EFFICIENCY[6]);
+  //   // Tagger energy statistics if verbose is set
+  //   int sum = 0;
+  //   if (is_in_string(VERBOSE, "g")){
+  //     printf("+++ Tagger Energy statistics +++\n");
+  //     printf("+Tagger #: total counts (multiple couts) (counts w/o multiples and w/ timing cut)\n");
+  //     for (int k = 0; k < TAG_CHANNELS; k++){
+  //       printf("+ Tagger %2d: %d (%d) (%d)\n", k, TAGGER.counts[k], TAGGER.multiples_per_channel[k], (Int_t) RAW_CALIB[CENTRAL].tagged[k].h_energy_mt.hist->Integral());
+  //       sum += TAGGER.counts[k];
+  //     }
+  //     printf("+\n+ Sum of all tagged channels: %d (includes multiples)\n", sum);
+  //     printf("+\n");
+  //     // Tagger multiplicity statistics
+  //     printf("+++ Multiple tagger counts +++\n");
+  //     for (int i = 0; i < TAG_CHANNELS; i++){
+  //       if (TAGGER.multiples_per_count[i] != 0) printf("+ %d events per tag: %2d\n", i, TAGGER.multiples_per_count[i]);
+  //     }
+  //     printf("+\n");
+  //     for (int k = 0; k < TAG_CHANNELS; k++){
+  //       printf("+ TAGGER ENERGY %2d:\n", k);
+  //       for (int a = 0; a<(int)MAPPING.size(); a++){
+  //         printf("-    ");
+  //         for (int b = 0; b<(int)MAPPING[a].size(); b++){
+  //           int ch = b*(int)MAPPING.size()+a; 
+  //           printf("%6d ", (Int_t) RAW_CALIB[ch].tagged[k].h_energy.hist->Integral());
+  //         }
+  //         printf("\n");
+  //       }
+  //     }
+  //     printf("+\n");
+  //     // Tagger timing histogram: with with most entries for cutting decision
+  //     for (int k = 0; k < TAG_CHANNELS; k++){
+  //       printf("TAGGER_CUT%02d=%i#\n", k, largest_1Dbin(TAGGER.t_hist[k].hist,-5000,5000));  
+  //     }
+  //   }
+  //   // Calculate the energy hist of the ring around the central crystal
+  //   for (int k = 0; k < (int)ECAL25[4].tagged.size(); k++){
+  //     for (int i = 0; i < (int)NMO.size(); i++){
+  //       if ( i == CENTRAL ) continue;
+  //       ECAL25[3].tagged[k].h_energy_mt_ring.hist->Add(TMAX[i].tagged[k].h_energy_mt.hist);
+  //     }
+  //   }
+
+  //   /// Scale all relevant histograms
+  //   vector<double> tagged_energy;
+  //   vector<double> tagged_energy_err;
+  //   vector<double> tagged_energy_err_err;
+  //   vector<double> lin_scaling; lin_scaling.push_back(0.01); lin_scaling.push_back(0.00);
+
+  //   for (int i = 0; i < 5; i++){
+  //     ScaleXaxis(ECAL25[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //     for (int k = 0; k < N_E_WINDOW; k++){
+  //       ScaleXaxis(ECAL25[i].tagged[k].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(ECAL25[i].tagged[k].h_energy_m.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(ECAL25[i].tagged[k].h_energy_mt.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(ECAL25[i].tagged[k].h_energy_mt_ring.hist, ScaleX, lin_scaling, "linear");
+  //     }
+  //   }
+  //   for (int i = 0; i < (int)RAW_CALIB.size(); i++){
+  //     ScaleXaxis(RAW_CALIB[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //     ScaleXaxis(MA[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //     ScaleXaxis(MWD[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //     ScaleXaxis(TMAX[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //     ScaleXaxis(NMO[i].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //     for (int k = 0; k < N_E_WINDOW; k++){
+  //       ScaleXaxis(RAW_CALIB[i].tagged[k].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(RAW_CALIB[i].tagged[k].h_energy_m.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(RAW_CALIB[i].tagged[k].h_energy_mt.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(MA[i].tagged[k].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(MA[i].tagged[k].h_energy_m.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(MA[i].tagged[k].h_energy_mt.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(MWD[i].tagged[k].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(MWD[i].tagged[k].h_energy_m.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(MWD[i].tagged[k].h_energy_mt.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(TMAX[i].tagged[k].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(TMAX[i].tagged[k].h_energy_m.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(TMAX[i].tagged[k].h_energy_mt.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(NMO[i].tagged[k].h_energy.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(NMO[i].tagged[k].h_energy_m.hist, ScaleX, lin_scaling, "linear");
+  //       ScaleXaxis(NMO[i].tagged[k].h_energy_mt.hist, ScaleX, lin_scaling, "linear");
+  //     }
+  //   }
+
+  //   // Print the split screen tagger energy histograms
+  //   plot_tagger_hist(RAW_CALIB, "ENERGY/TAGGER/PULSE_HIGHT/RAW_CALIB", "pulseheight");
+  //   plot_tagger_hist(MA, "ENERGY/TAGGER/PULSE_HIGHT/MA", "pulseheight");
+  //   plot_tagger_hist(MWD, "ENERGY/TAGGER/PULSE_HIGHT/MWD", "pulseheight");
+  //   plot_tagger_hist(TMAX, "ENERGY/TAGGER/PULSE_HIGHT/TMAX", "pulseheight");
+  //   plot_tagger_hist(NMO, "ENERGY/TAGGER/PULSE_HIGHT/NMO", "pulseheight");
+  //   // Print the split screen tagger energy histograms
+  //   plot_tagger_hist(RAW_CALIB, "ENERGY/TAGGER/INTEGRAL/RAW_CALIB", "integral");
+  //   plot_tagger_hist(MA, "ENERGY/TAGGER/INTEGRAL/MA", "integral");
+  //   plot_tagger_hist(MWD, "ENERGY/TAGGER/INTEGRAL/MWD", "integral");
+  //   plot_tagger_hist(TMAX, "ENERGY/TAGGER/INTEGRAL/TMAX", "integral");
+  //   plot_tagger_hist(NMO, "ENERGY/TAGGER/INTEGRAL/NMO", "integral");
+
+  //   for (int i = 3; i < 4; i++){
+  //   // for (int i = 0; i < (int)ECAL25.size(); i++){
+  //     for (int k = 0; k < N_E_WINDOW; k++){
+  //       // if (k<3) ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+  //       // if (k>=3) ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+
+  //       // if (k<3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 50,  0); 
+  //       // if (k==3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 10, 80,  0); 
+  //       // if (k==4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 10, 80,  0); 
+  //       // if (k>4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 800,  0); 
+  //       if (LIN_COMP == 0) {
+  //         ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+
+  //         // if (k<3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 50,  0); 
+  //         // if (k==3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 10, 80,  0); 
+  //         // if (k==4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 10, 80,  0); 
+  //         // if (k>4 && k<10) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 800,  0); 
+  //         // if (k==10) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 200, 350,  0);           
+  //         // if (k>10) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 250, 350,  0); 
+
+  //         ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 200,  0); 
+  //         tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[2]);
+  //         tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[4]);
+  //         tagged_energy_err_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[5]);
+  //       }
+  //       if (LIN_COMP != 0){
+  //         // if (k<3) {
+  //         //   ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 50,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[2]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[4]);
+  //         //   tagged_energy_err_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[5]);
+  //         // }
+  //         // if (k==3 || k==4) {
+  //         //   ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 10, 100,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[2]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[4]);
+  //         //   tagged_energy_err_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[5]);
+  //         // }
+  //         // if (k==6 ){
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "lingaus", 100, 300,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[8]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[9]);
+  //         //   tagged_energy_err_err.push_back(sqrt(ECAL25[i].tagged[k].h_energy_mt.params[9]));
+  //         // } 
+  //         // if (k == 7){
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "lingaus", 120, 180,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[8]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[9]);
+  //         //   tagged_energy_err_err.push_back(sqrt(ECAL25[i].tagged[k].h_energy_mt.params[9]));
+  //         // } 
+  //         // if (k==8){
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "lingaus", 140, 300,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[8]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[9]);
+  //         //   tagged_energy_err_err.push_back(sqrt(ECAL25[i].tagged[k].h_energy_mt.params[9]));          
+  //         // } 
+  //         // if (k==9){
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "lingaus", 180, 800,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[8]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[9]);
+  //         //   tagged_energy_err_err.push_back(sqrt(ECAL25[i].tagged[k].h_energy_mt.params[9]));          
+  //         // } 
+  //         // if (k>9){
+  //         //   ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
+  //         //   ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 300, 650,  0); 
+  //         //   tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[2]);
+  //         //   tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[4]);
+  //         //   tagged_energy_err_err.push_back(sqrt(ECAL25[i].tagged[k].h_energy_mt.params[5]));
+  //         // }           
+  //         ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "lingaus", 0, 800,  1); 
+  //         tagged_energy.push_back(ECAL25[i].tagged[k].h_energy_mt.params[8]);
+  //         tagged_energy_err.push_back(ECAL25[i].tagged[k].h_energy_mt.params[9]);
+  //         tagged_energy_err_err.push_back(sqrt(ECAL25[i].tagged[k].h_energy_mt.params[9]));
+  //       }
+  //     }
+  //   }
+  //   // Plot the tagger time versus ECAL energy 
+  //   plot_TH2D_hist(TAGGER.h_tagger_vs_energy.hist, "JUNK", "Tagger_time_vs_energy");
+  //   // Plot ECAL energy vs tagger energy
+  //   plot_energy_vs_tagged(tagged_energy, tagged_energy_err, "JUNK", "energy_vs_tagged");
+  //   // Plot ECAL energy resolution
+  //   plot_energy_resolution(tagged_energy_err, tagged_energy_err_err, "JUNK", "energy_resolution");
+  //   // Plot bar chart for the tagger counting frequency
+  //   vector<double> tagger_frequencies;
+  //   vector<double> tagger_energies;
+  //   for (int k = 0; k<16; k++){
+  //     tagger_frequencies.push_back( TAGGER.counts[k] );
+  //     tagger_energies.push_back( TAGGER.energy[k] );
+  //     printf("%d\n", TAGGER.counts[k]);
+  //     TAGGER.h_stats.hist->SetBinContent(round(TAGGER.energy[k]),TAGGER.counts[k]);
+  //   }
+  //   // plot_trace(tagger_frequencies, "Tagger Frequency", "ENERGY/TAGGER/",  "AB");
+  //   // plot_1D_xy(tagger_energies, tagger_frequencies, "Tagger Frequency", "ENERGY/TAGGER/",  "AB");
+
+    // Timin statistics
+    for (int i = 0; i < (int)NMO.size(); i ++){
+      for (int j = 0; j < (int)NMO[i].time.size(); j ++){
+        for (int k = 0; k < (int)NMO[i].time[j].h_timing.size(); k++){
+          // NMO[i].time[j].h_timing[k].hist->Rebin(10);
+          NMO[i].time[j].h_timing[k].params = fit_hist(NMO[i].time[j].h_timing[k].hist, NMO[i].time[j].h_timing[k].fit, "gaus", -50, 50, 0);
         }
       }
-      printf("+\n");
-      // Tagger timing histogram: with with most entries for cutting decision
-      for (int k = 0; k < TAG_CHANNELS; k++){
-        printf("TAGGER_CUT%02d=%i#\n", k, largest_1Dbin(TAGGER.t_hist[k].hist,-5000,5000));  
-      }
     }
-    // Calculate the energy hist of the ring around the central crystal
-    for (int k = 0; k < (int)ECAL25[4].tagged.size(); k++){
-      for (int i = 0; i < (int)NMO.size(); i++){
-        if ( i == CENTRAL ) continue;
-        ECAL25[3].tagged[k].h_energy_mt_ring.hist->Add(TMAX[i].tagged[k].h_energy_mt.hist);
-      }
-    }
+    hfile->cd("JUNK");
+    plot_time_energy(NMO[0].time[1]);
 
-
-    // Print the split screen tagger energy histograms
-    plot_tagger_hist(RAW_CALIB, "ENERGY/TAGGER/PULSE_HIGHT/RAW_CALIB", "pulseheight");
-    plot_tagger_hist(MA, "ENERGY/TAGGER/PULSE_HIGHT/MA", "pulseheight");
-    plot_tagger_hist(MWD, "ENERGY/TAGGER/PULSE_HIGHT/MWD", "pulseheight");
-    plot_tagger_hist(TMAX, "ENERGY/TAGGER/PULSE_HIGHT/TMAX", "pulseheight");
-    plot_tagger_hist(NMO, "ENERGY/TAGGER/PULSE_HIGHT/NMO", "pulseheight");
-    // Print the split screen tagger energy histograms
-    plot_tagger_hist(RAW_CALIB, "ENERGY/TAGGER/INTEGRAL/RAW_CALIB", "integral");
-    plot_tagger_hist(MA, "ENERGY/TAGGER/INTEGRAL/MA", "integral");
-    plot_tagger_hist(MWD, "ENERGY/TAGGER/INTEGRAL/MWD", "integral");
-    plot_tagger_hist(TMAX, "ENERGY/TAGGER/INTEGRAL/TMAX", "integral");
-    plot_tagger_hist(NMO, "ENERGY/TAGGER/INTEGRAL/NMO", "integral");
-
-    /// Fit for the energy sum
-    /// 
-    for (int i = 0; i < (int)ECAL25.size(); i++){
-      for (int k = 0; k < N_E_WINDOW; k++){
-        // if (k<3) ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
-        // if (k>=3) ECAL25[i].tagged[k].h_energy_mt.hist->Rebin(50);
-
-        // if (k<3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 5000,  0); 
-        // if (k==3) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 1000, 8000,  0); 
-        // if (k==4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 1000, 8000,  0); 
-        // if (k>4) ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 80000,  0); 
-        ECAL25[i].tagged[k].h_energy_mt.params = fit_hist(ECAL25[i].tagged[k].h_energy_mt.hist, ECAL25[i].tagged[k].h_energy_mt.fit, "gaus", 0, 80000,  0); 
-      }
-    }
-    // Plot the tagger time versus ECAL energy 
-    plot_TH2D_hist(TAGGER.h_tagger_vs_energy.hist, "JUNK", "Tagger_time_vs_energy");
-    // Plot ECAL energy vs tagger energy
-    plot_energy_vs_tagged(ECAL25[3], "JUNK", "energy_vs_tagged");
-    // Plot ECAL energy resolution
-    plot_energy_resolution(ECAL25[3], "JUNK", "energy_resolution");
-    // Plot bar chart for the tagger counting frequency
-    vector<double> tagger_frequencies;
-    for (int k = 0; k<16; k++){
-      tagger_frequencies.push_back( TAGGER.counts[k] );
-      printf("%d\n", TAGGER.counts[k]);
-    }
-    hfile->cd("ENERGY/TAGGER/");
-    plot_trace(tagger_frequencies, "Tagger Frequency", "AB");
   }
 
   // Extract TRACELEN 1D hists out of the 2D hist
-  char name[100];
+  char path[100];
   if (EXTRACT_PROTO == 1){
     for (int i = 0; i < (int)RAW_CALIB.size(); i++){
-      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
-      hfile->cd(name);
+      sprintf(path,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      hfile->cd(path);
       double largest = 0;
       int min = 0;
       int max = 0;
       int nbins = 0;
       for (int n = 1; n <= (int)RAW_CALIB[i].trace.size(); n++){
-        sprintf(name, "SLICE%2d", n);
-        RAW_CALIB[i].TH1D_proto_trace[n].hist = RAW_CALIB[i].TH2D_proto_trace.hist->ProjectionY(name, n,n);
+        sprintf(path, "SLICE%2d", n);
+        RAW_CALIB[i].TH1D_proto_trace[n].hist = RAW_CALIB[i].TH2D_proto_trace.hist->ProjectionY(path, n,n);
         RAW_CALIB[i].TH1D_proto_trace[n].hist->Rebin(1);
         // Search for the largest bin
         largest = largest_1Dbin( RAW_CALIB[i].TH1D_proto_trace[n].hist, -5000, 10000);
@@ -1787,19 +2018,19 @@ void print_final_statistics(){
         else RAW_CALIB[i].TH1D_proto_trace[n].params = fit_hist(RAW_CALIB[i].TH1D_proto_trace[n].hist, RAW_CALIB[i].TH1D_proto_trace[n].fit, "gaus", largest-300,largest+100,0);
         RAW_CALIB[i].proto_trace_fit.push_back(RAW_CALIB[i].TH1D_proto_trace[n].params[2]);
       }
-      plot_trace(RAW_CALIB[i].proto_trace, "PROTO_TRACE", "AL*");
-      plot_trace(RAW_CALIB[i].proto_trace_maxbin, "PROTO_TRACE_MAXBIN", "AL*");
-      plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
+      plot_trace(RAW_CALIB[i].proto_trace, "PROTO_TRACE", path, "AL*");
+      plot_trace(RAW_CALIB[i].proto_trace_maxbin, "PROTO_TRACE_MAXBIN", path, "AL*");
+      plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT", path, "AL*");
 
-      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
-      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_maxbin, name, "PROTO_TRACE_2D_MAXBIN");
-      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_fit, name, "PROTO_TRACE_2D_FIT");
+      sprintf(path,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_maxbin, path, "PROTO_TRACE_2D_MAXBIN");
+      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, RAW_CALIB[i].proto_trace_fit, path, "PROTO_TRACE_2D_FIT");
       // adjust trace for baseline offset
       double mean = array_mean(RAW_CALIB[i].proto_trace_fit, 0, BASELINE_CUT);
       for (int n = 0; n < (int)RAW_CALIB[i].proto_trace_fit.size(); n++ ){
         RAW_CALIB[i].proto_trace_fit[n] -= mean;  
       }
-      plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT_ADJUSTED", "AL*");
+      plot_trace(RAW_CALIB[i].proto_trace_fit, "PROTO_TRACE_FIT_ADJUSTED", path, "AL*");
     }
     // Extract proto trace to text file for later reading 
     if (proto_out->is_open()){
@@ -1817,9 +2048,9 @@ void print_final_statistics(){
   if (EXTRACT_PROTO == 0){
     for (int i = 0; i < (int)RAW_CALIB.size(); i++){
       RAW_CALIB[i].proto_trace_fit = PROTO[i].proto_trace_fit;
-      plot_trace(PROTO[i].proto_trace_fit, "PROTO_TRACE_FIT", "AL*");
-      sprintf(name,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
-      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, PROTO[i].proto_trace_fit,name, "PROTO_TRACE_2D_FIT");
+      plot_trace(PROTO[i].proto_trace_fit, "PROTO_TRACE_FIT", path, "AL*");
+      sprintf(path,"WAVE_FORMS/RAW_CALIB/PROTO_TRACE_%02d", i);
+      plot_TH2D_hist_graph(RAW_CALIB[i].TH2D_proto_trace.hist, PROTO[i].proto_trace_fit,path, "PROTO_TRACE_2D_FIT");
     }
   }
 
@@ -1829,19 +2060,19 @@ void print_final_statistics(){
   //
   //  Print the split screen histograms  
   //
-  // plot_energy_hist(RAW, "ENERGY/PULSE_HIGHT/RAW", "pulseheight");
-  plot_energy_hist(RAW_CALIB, "ENERGY/PULSE_HIGHT/RAW_CALIB", "pulseheight");
-  plot_energy_hist(MA, "ENERGY/PULSE_HIGHT/MA", "pulseheight");
-  plot_energy_hist(MWD, "ENERGY/PULSE_HIGHT/MWD", "pulseheight");
-  plot_energy_hist(TMAX, "ENERGY/PULSE_HIGHT/TMAX", "pulseheight");
-  // plot_energy_hist(NMO, "ENERGY/PULSE_HIGHT/NMO", "pulseheight");
-  //
-  // plot_energy_hist(RAW, "ENERGY/INTEGRAL/RAW", "integral");
-  plot_energy_hist(RAW_CALIB, "ENERGY/INTEGRAL/RAW_CALIB", "integral");
-  plot_energy_hist(MA, "ENERGY/INTEGRAL/MA", "integral");
-  plot_energy_hist(MWD, "ENERGY/INTEGRAL/MWD", "integral");
-  plot_energy_hist(TMAX, "ENERGY/INTEGRAL/TMAX", "integral");
-  // plot_energy_hist(NMO, "ENERGY/INTEGRAL/NMO", "integral");
+  // // plot_energy_hist(RAW, "ENERGY/PULSE_HIGHT/RAW", "pulseheight");
+  // plot_energy_hist(RAW_CALIB, "ENERGY/PULSE_HIGHT/RAW_CALIB", "pulseheight");
+  // plot_energy_hist(MA, "ENERGY/PULSE_HIGHT/MA", "pulseheight");
+  // plot_energy_hist(MWD, "ENERGY/PULSE_HIGHT/MWD", "pulseheight");
+  // plot_energy_hist(TMAX, "ENERGY/PULSE_HIGHT/TMAX", "pulseheight");
+  // // plot_energy_hist(NMO, "ENERGY/PULSE_HIGHT/NMO", "pulseheight");
+  // //
+  // // plot_energy_hist(RAW, "ENERGY/INTEGRAL/RAW", "integral");
+  // plot_energy_hist(RAW_CALIB, "ENERGY/INTEGRAL/RAW_CALIB", "integral");
+  // plot_energy_hist(MA, "ENERGY/INTEGRAL/MA", "integral");
+  // plot_energy_hist(MWD, "ENERGY/INTEGRAL/MWD", "integral");
+  // plot_energy_hist(TMAX, "ENERGY/INTEGRAL/TMAX", "integral");
+  // // plot_energy_hist(NMO, "ENERGY/INTEGRAL/NMO", "integral");
   
   printf("+ END OF STATISTICS +\n");
 
@@ -1871,28 +2102,28 @@ void print_energy_statistics(vector<signal_struct> &array, const char *name){
 void print_energy_calib(){
   for (int i = 0; i < (int)RAW_CALIB.size(); i++){
     if (RAW_CALIB[i].is_valid == false){
-      printf("ENERGY_CALIB0%d=1.000,1.000,1.000,1.000 (invalid channel)\n", i);
+      printf("ENERGY_CALIB%02d=1.000,1.000,1.000,1.000 (invalid channel)\n", i);
     }
     else {
       if (i == 0) printf("+ Absolut calibration parameters\n");
-      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
+      printf("ENERGY_CALIB%02d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
       i,
       (ENERGY_NORM/RAW_CALIB[i].h_energy.params[8])*CALIB.RAW_energy[i],
       (ENERGY_NORM/MA[i].h_energy.params[8])*(CALIB.MA_energy[i]*CALIB.RAW_energy[i]),
-      (ENERGY_NORM/MWD[i].h_energy.params[8])*CALIB.MWD_energy[i]*CALIB.RAW_energy[i],
-      (ENERGY_NORM/TMAX[i].h_energy.params[8]*CALIB.TMAX_energy[i]*CALIB.RAW_energy[i]),
-      (ENERGY_NORM/NMO[i].h_energy.params[8]*CALIB.NMO_energy[i]*CALIB.RAW_energy[i])
+      (ENERGY_NORM/MWD[i].h_energy.params[8])*(CALIB.MWD_energy[i]*CALIB.RAW_energy[i]),
+      (ENERGY_NORM/TMAX[i].h_energy.params[8])*(CALIB.TMAX_energy[i]*CALIB.RAW_energy[i]),
+      (ENERGY_NORM/NMO[i].h_energy.params[8])*(CALIB.NMO_energy[i]*CALIB.RAW_energy[i])
       );
     }
   }
   printf("+\n");
   for (int i = 0; i < (int)RAW_CALIB.size(); i++){
     if (RAW_CALIB[i].is_valid == false){
-      printf("ENERGY_CALIB0%d=1.000,1.000,1.000,1.000 (invalid channel)\n", i);
+      printf("ENERGY_CALIB%02d=1.000,1.000,1.000,1.000 (invalid channel)\n", i);
     }
     else{
       if (i == 0) printf("+ Relative calibration parameters\n");
-      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
+      printf("ENERGY_CALIB%02d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
       i,
       (ENERGY_NORM/RAW_CALIB[i].h_energy.params[8]),
       (ENERGY_NORM/MA[i].h_energy.params[8]),
@@ -1905,11 +2136,11 @@ void print_energy_calib(){
   printf("+\n");
   for (int i = 0; i < (int)RAW_CALIB.size(); i++){
     if (RAW_CALIB[i].is_valid == false){
-      printf("ENERGY_CALIB0%d=1.000,1.000,1.000,1.000 (invalid channel)\n", i);
+      printf("ENERGY_CALIB%02d=1.000,1.000,1.000,1.000 (invalid channel)\n", i);
     }
     else{
       if (i == 0) printf("+ Multiplication calibration factors\n");
-      printf("ENERGY_CALIB0%d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
+      printf("ENERGY_CALIB%02d=%3.3f,%3.3f,%3.3f,%3.3f,%3.3f\n", 
       i,
       CALIB.RAW_energy[i],
       CALIB.MA_energy[i],
